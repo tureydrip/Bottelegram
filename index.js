@@ -41,11 +41,11 @@ bot.onText(/\/start/, async (msg) => {
       parse_mode: "Markdown",
       reply_markup: {
         keyboard: [
-          [{ text: "➕ Agregar Saldo" }, { text: "📦 Crear Producto" }],
-          [{ text: "📋 Gestionar Productos" }]
+          [{ text: "➕ Agregar Saldo" }, { text: "➖ Quitar Saldo" }], // <-- NUEVO BOTÓN
+          [{ text: "📦 Crear Producto" }, { text: "📋 Gestionar Productos" }]
         ],
-        resize_keyboard: true, // Esto hace que los botones no ocupen toda la pantalla
-        is_persistent: true    // Mantiene el teclado abierto
+        resize_keyboard: true, 
+        is_persistent: true    
       }
     });
   } else {
@@ -112,6 +112,32 @@ bot.on('message', async (msg) => {
       userStates[chatId] = { step: 'AWAITING_USER_ID' };
       return bot.sendMessage(chatId, "Envía el **ID del usuario** para recargarle saldo:", { parse_mode: "Markdown" });
     }
+
+    // --- NUEVA FUNCIÓN: QUITAR SALDO ---
+    if (text === "➖ Quitar Saldo") {
+      const usersSnap = await get(ref(db, 'users'));
+      if (!usersSnap.exists()) return bot.sendMessage(chatId, "No hay usuarios registrados en la base de datos.");
+
+      let lista = "👥 *Usuarios con saldo disponible:*\n\n";
+      let hayUsuariosConSaldo = false;
+
+      // Buscamos a todos los que tengan saldo mayor a 0
+      usersSnap.forEach((child) => {
+        const user = child.val();
+        if (user.saldo > 0) {
+          lista += `👤 *${user.nombre}*\n🆔 ID: \`${child.key}\`\n💰 Saldo: $${user.saldo}\n\n`;
+          hayUsuariosConSaldo = true;
+        }
+      });
+
+      if (!hayUsuariosConSaldo) {
+        return bot.sendMessage(chatId, "❌ En este momento no hay ningún usuario que tenga saldo en su cuenta.");
+      }
+
+      lista += "Para quitar saldo, copia y envía el **ID del usuario** de la lista de arriba:";
+      userStates[chatId] = { step: 'AWAITING_REMOVE_USER_ID' };
+      return bot.sendMessage(chatId, lista, { parse_mode: "Markdown" });
+    }
     
     if (text === "📦 Crear Producto") {
       userStates[chatId] = { step: 'AWAITING_PROD_NAME' };
@@ -135,6 +161,7 @@ bot.on('message', async (msg) => {
   const state = userStates[chatId];
   if (!state || text.startsWith('/')) return;
 
+  // ESTADOS PARA AGREGAR SALDO
   if (state.step === 'AWAITING_USER_ID') {
     const targetUserId = text.trim();
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
@@ -158,6 +185,43 @@ bot.on('message', async (msg) => {
     bot.sendMessage(state.targetUserId, `🎉 ¡Te han recargado $${amount} de saldo!`);
     delete userStates[chatId];
   }
+
+  // --- NUEVOS ESTADOS PARA QUITAR SALDO ---
+  else if (state.step === 'AWAITING_REMOVE_USER_ID') {
+    const targetUserId = text.trim();
+    const userSnapshot = await get(ref(db, `users/${targetUserId}`));
+    
+    if (userSnapshot.exists()) {
+      const userData = userSnapshot.val();
+      if (userData.saldo <= 0) {
+        bot.sendMessage(chatId, "❌ Este usuario ya tiene $0 de saldo.");
+        delete userStates[chatId];
+        return;
+      }
+      userStates[chatId] = { step: 'AWAITING_REMOVE_AMOUNT', targetUserId };
+      bot.sendMessage(chatId, `Usuario: ${userData.nombre || "Usuario"} (Saldo actual: $${userData.saldo}).\n¿Cuánto saldo le deseas quitar? (Escribe solo el número)`);
+    } else {
+      bot.sendMessage(chatId, "❌ Usuario no encontrado. Intenta de nuevo presionando '➖ Quitar Saldo'.");
+      delete userStates[chatId];
+    }
+  }
+  else if (state.step === 'AWAITING_REMOVE_AMOUNT') {
+    const amount = parseFloat(text.trim());
+    if (isNaN(amount) || amount <= 0) return bot.sendMessage(chatId, "❌ Escribe un número válido mayor a 0.");
+
+    const targetRef = ref(db, `users/${state.targetUserId}/saldo`);
+    const currentBalance = (await get(targetRef)).val() || 0;
+
+    let nuevoSaldo = currentBalance - amount;
+    if (nuevoSaldo < 0) nuevoSaldo = 0; // Evita que el saldo quede en negativo (-10 por ejemplo)
+
+    await set(targetRef, nuevoSaldo);
+    bot.sendMessage(chatId, `✅ Saldo descontado correctamente. Nuevo saldo del usuario: $${nuevoSaldo}`);
+    bot.sendMessage(state.targetUserId, `⚠️ Se han descontado $${amount} de tu saldo. Tu saldo actual es de: $${nuevoSaldo}`);
+    delete userStates[chatId];
+  }
+
+  // RESTO DE LOS ESTADOS ORIGINALES
   else if (state.step === 'AWAITING_PROD_NAME') {
     const newProdRef = push(ref(db, 'productos'));
     await set(newProdRef, { nombre: text.trim() });
