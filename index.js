@@ -20,7 +20,7 @@ const db = getDatabase(app);
 const token = '8240591970:AAHKKVZqRRXuGoEEjPADzOFa4br8okppPJw'; // ¡Pon tu Token aquí!
 const bot = new TelegramBot(token, { polling: true });
 
-const admins = [8182510987, 7710633235];
+const admins = [8182510987, 7710633235, 5706003078];
 const WHATSAPP_URL = "https://wa.me/523224528803";
 const userStates = {};
 
