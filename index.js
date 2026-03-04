@@ -41,7 +41,8 @@ bot.onText(/\/start/, async (msg) => {
       reply_markup: {
         keyboard: [
           [{ text: "➕ Agregar Saldo" }, { text: "➖ Quitar Saldo" }],
-          [{ text: "📦 Crear Producto" }, { text: "📋 Gestionar Productos" }]
+          [{ text: "📦 Crear Producto" }, { text: "📋 Gestionar Productos" }],
+          [{ text: "📊 Ver Stocks" }, { text: "✏️ Editar Precios" }] // <-- NUEVAS OPCIONES
         ],
         resize_keyboard: true, 
         is_persistent: true    
@@ -149,6 +150,48 @@ bot.on('message', async (msg) => {
       });
       return bot.sendMessage(chatId, "Selecciona un producto:", { reply_markup: { inline_keyboard: botones } });
     }
+
+    // --- NUEVO: VER STOCKS ---
+    if (text === "📊 Ver Stocks") {
+      const prodsSnap = await get(ref(db, 'productos'));
+      if (!prodsSnap.exists()) return bot.sendMessage(chatId, "No hay productos en la base de datos.");
+
+      let mensaje = "📊 *Inventario Actual de Stocks:*\n\n";
+      
+      prodsSnap.forEach((child) => {
+        const prod = child.val();
+        mensaje += `📦 *${prod.nombre}*\n`;
+        if (prod.opciones) {
+          for (const optId in prod.opciones) {
+            const opt = prod.opciones[optId];
+            let stock = 0;
+            if (opt.keys) {
+              stock = Array.isArray(opt.keys) ? opt.keys.length : Object.keys(opt.keys).length;
+            }
+            mensaje += `  ├ ${opt.titulo}: *${stock}* disponibles\n`;
+          }
+        } else {
+          mensaje += `  └ Sin duraciones configuradas.\n`;
+        }
+        mensaje += "\n";
+      });
+      return bot.sendMessage(chatId, mensaje, { parse_mode: "Markdown" });
+    }
+
+    // --- NUEVO: EDITAR PRECIOS (MENÚ PRINCIPAL) ---
+    if (text === "✏️ Editar Precios") {
+      const prodsSnap = await get(ref(db, 'productos'));
+      if (!prodsSnap.exists()) return bot.sendMessage(chatId, "No hay productos.");
+
+      const botones = [];
+      prodsSnap.forEach((child) => {
+        const nombre = child.val().nombre || "Producto";
+        botones.push([{ text: `✏️ Editar precios de ${nombre}`, callback_data: `edit_price_prod:${child.key}` }]);
+      });
+      return bot.sendMessage(chatId, "Selecciona el producto al que deseas editarle los precios:", { 
+        reply_markup: { inline_keyboard: botones } 
+      });
+    }
   }
 
   // --- LÓGICA DE ESTADOS ---
@@ -249,6 +292,21 @@ bot.on('message', async (msg) => {
     
     await set(keysRef, currentKeys);
     bot.sendMessage(chatId, `✅ Se agregaron ${keysArray.length} keys exitosamente a esta opción.`);
+  }
+  
+  // --- NUEVO: ESTADO PARA ESPERAR EL NUEVO PRECIO ---
+  else if (currentState.step === 'AWAITING_NEW_PRICE') {
+    const nuevoPrecio = parseInt(text.trim());
+    if (isNaN(nuevoPrecio) || nuevoPrecio < 0) {
+      userStates[chatId] = currentState; 
+      return bot.sendMessage(chatId, "❌ Por favor envía un precio válido (solo números, ej: 15).");
+    }
+
+    await update(ref(db), {
+      [`productos/${currentState.prodId}/opciones/${currentState.optId}/precio`]: nuevoPrecio
+    });
+
+    bot.sendMessage(chatId, `✅ Precio actualizado exitosamente a $${nuevoPrecio}.`);
   }
 });
 
@@ -364,7 +422,6 @@ bot.on('callback_query', async (query) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "➕ Agregar Duración/Precio", callback_data: `add_opt:${prodId}` }],
-            // --- NUEVO BOTÓN AQUÍ ---
             [{ text: "🔑 Agregar Keys a Duración", callback_data: `choose_opt_keys:${prodId}` }],
             [{ text: "🗑️ Eliminar Producto", callback_data: `del_prod:${prodId}` }]
           ]
@@ -372,7 +429,6 @@ bot.on('callback_query', async (query) => {
       });
     }
 
-    // --- NUEVA LÓGICA PARA ELEGIR A QUÉ DURACIÓN METERLE KEYS ---
     if (data.startsWith('choose_opt_keys:')) {
       const prodId = data.split(':')[1];
       const prodSnap = await get(ref(db, `productos/${prodId}`));
@@ -389,13 +445,44 @@ bot.on('callback_query', async (query) => {
         const opt = opciones[optId];
         const titulo = opt.titulo || "Opción";
         const precio = opt.precio || 0;
-        // Reusamos el callback `add_keys` que ya estaba programado
         botones.push([{ text: `🔑 ${titulo} - $${precio}`, callback_data: `add_keys:${prodId}:${optId}` }]);
       }
 
       bot.sendMessage(chatId, "Selecciona a qué duración le quieres agregar las keys:", {
         reply_markup: { inline_keyboard: botones }
       });
+    }
+    
+    // --- NUEVO: FLUJO PARA EDITAR PRECIOS DESDE CALLBACK ---
+    if (data.startsWith('edit_price_prod:')) {
+      const prodId = data.split(':')[1];
+      const prodSnap = await get(ref(db, `productos/${prodId}`));
+
+      if (!prodSnap.exists() || !prodSnap.val().opciones) {
+         bot.sendMessage(chatId, "⚠️ Este producto no tiene duraciones configuradas para editarles el precio.");
+         return responder();
+      }
+
+      const opciones = prodSnap.val().opciones;
+      const botones = [];
+
+      for (const optId in opciones) {
+        const opt = opciones[optId];
+        botones.push([{ text: `${opt.titulo} (Actual: $${opt.precio})`, callback_data: `edit_price_opt:${prodId}:${optId}` }]);
+      }
+
+      bot.sendMessage(chatId, "Selecciona la duración a la que le quieres cambiar el precio:", {
+        reply_markup: { inline_keyboard: botones }
+      });
+    }
+
+    if (data.startsWith('edit_price_opt:')) {
+      const partes = data.split(':');
+      const prodId = partes[1];
+      const optId = partes[2];
+      
+      userStates[chatId] = { step: 'AWAITING_NEW_PRICE', prodId, optId };
+      bot.sendMessage(chatId, "Escribe el **nuevo precio** para esta duración (solo el número, ej: 15):", { parse_mode: "Markdown" });
     }
 
     if (data.startsWith('del_prod:')) {
