@@ -1,7 +1,7 @@
 {
-  "name": "temo-store-bot",
+  "name": "temo-store",
   "version": "1.0.0",
-  "description": "Bot de tienda para Telegram",
+  "description": "Bot de tienda automatica para Telegram",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -15,6 +15,6 @@
     "pino": "^10.3.0"
   },
   "keywords": [],
-  "author": "",
+  "author": "Temo Store",
   "license": "ISC"
 }
