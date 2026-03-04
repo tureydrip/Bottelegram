@@ -48,7 +48,7 @@ async function checkAdminPermissions(chatId) {
   return { isPrincipal, isSubAdmin, isAdmin, hasPermission };
 }
 
-// Función para descargar TikTok usando TIKWM (Del código Python adaptado a JS)
+// Función para descargar TikTok usando TIKWM
 async function getTikTokVideo(url) {
   try {
     const response = await fetch("https://www.tikwm.com/api/", {
@@ -68,7 +68,6 @@ async function getTikTokVideo(url) {
 }
 
 // --- 3. COMANDO /START ---
-// Modificamos el start para capturar quién invitó a quién: /start <ID_INVITADOR>
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const username = msg.from.first_name || "Usuario";
@@ -90,7 +89,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         let nuevosInvitados = (inviterData.invitados || 0) + 1;
         let nuevosCreditos = inviterData.tiktok_credits || 0;
 
-        // Cada 5 invitados = 2 créditos (para 2 videos)
         if (nuevosInvitados % 5 === 0) {
           nuevosCreditos += 2;
           bot.sendMessage(refId, `🎉 *¡Felicidades!*\nHas llegado a ${nuevosInvitados} invitados y ganaste **2 Créditos** para descargar TikToks gratis.`, { parse_mode: "Markdown" });
@@ -121,7 +119,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     if (hasPermission('edit_price')) row3.push({ text: "✏️ Editar Precios" });
     if (row3.length > 0) keyboard.push(row3);
 
-    // NUEVO: Botón de TikTok para Admins
     keyboard.push([{ text: "📱 Descargar TikTok" }]);
 
     if (isPrincipal) keyboard.push([{ text: "👥 Gestionar Admins" }]);
@@ -137,7 +134,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         keyboard: [
           [{ text: "🛒 Ver Productos" }], 
           [{ text: "👤 Mi Perfil" }, { text: "💳 Recargar Saldo" }],
-          [{ text: "📱 Descargar TikTok" }] // NUEVO: Botón para usuarios
+          [{ text: "📱 Descargar TikTok" }]
         ],
         resize_keyboard: true, is_persistent: true
       }
@@ -181,11 +178,13 @@ bot.on('message', async (msg) => {
     if (!prodsSnap.exists()) return bot.sendMessage(chatId, "No hay productos disponibles.");
     
     const botones = [];
-    prodsSnap.forEach((child) => botones.push([{ text: `🎮 ${child.val().nombre || "Producto"}`, callback_data: `buy_prod:${child.key}` }]));
+    // SOLUCIÓN: Agregadas las llaves {} para evitar que Firebase detenga el ciclo prematuramente
+    prodsSnap.forEach((child) => {
+      botones.push([{ text: `🎮 ${child.val().nombre || "Producto"}`, callback_data: `buy_prod:${child.key}` }]);
+    });
     return bot.sendMessage(chatId, "Selecciona un producto para ver sus precios:", { reply_markup: { inline_keyboard: botones } });
   }
 
-  // --- NUEVA FUNCIÓN: DESCARGAR TIKTOK ---
   if (text === "📱 Descargar TikTok") {
     if (isAdmin) {
       userStates[chatId] = { step: 'AWAITING_TIKTOK_URL', cost: 0, useCredit: false };
@@ -208,7 +207,6 @@ bot.on('message', async (msg) => {
     }
   }
 
-  // --- FUNCIONES DEL ADMIN ---
   if (isAdmin) {
     if (text === "👥 Gestionar Admins" && isPrincipal) {
       return bot.sendMessage(chatId, "⚙️ *Gestión de Administradores*\n¿Qué deseas hacer?", { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "➕ Agregar Admin", callback_data: "admin_add" }, { text: "➖ Quitar Admin", callback_data: "admin_remove" }], [{ text: "🎛️ Configurar Permisos", callback_data: "admin_perms" }]] } });
@@ -239,7 +237,10 @@ bot.on('message', async (msg) => {
       const prodsSnap = await get(ref(db, 'productos'));
       if (!prodsSnap.exists()) return bot.sendMessage(chatId, "No hay productos.");
       const botones = [];
-      prodsSnap.forEach((child) => botones.push([{ text: `Editar/Eliminar ${child.val().nombre || "Producto"}`, callback_data: `edit_prod:${child.key}` }]));
+      // SOLUCIÓN: Agregadas las llaves {}
+      prodsSnap.forEach((child) => {
+        botones.push([{ text: `Editar/Eliminar ${child.val().nombre || "Producto"}`, callback_data: `edit_prod:${child.key}` }]);
+      });
       return bot.sendMessage(chatId, "Selecciona un producto:", { reply_markup: { inline_keyboard: botones } });
     }
     if (text === "📊 Ver Stocks") {
@@ -265,7 +266,10 @@ bot.on('message', async (msg) => {
       const prodsSnap = await get(ref(db, 'productos'));
       if (!prodsSnap.exists()) return bot.sendMessage(chatId, "No hay productos.");
       const botones = [];
-      prodsSnap.forEach((child) => botones.push([{ text: `✏️ Editar precios de ${child.val().nombre || "Producto"}`, callback_data: `edit_price_prod:${child.key}` }]));
+      // SOLUCIÓN: Agregadas las llaves {}
+      prodsSnap.forEach((child) => {
+        botones.push([{ text: `✏️ Editar precios de ${child.val().nombre || "Producto"}`, callback_data: `edit_price_prod:${child.key}` }]);
+      });
       return bot.sendMessage(chatId, "Selecciona el producto:", { reply_markup: { inline_keyboard: botones } });
     }
   }
@@ -276,7 +280,6 @@ bot.on('message', async (msg) => {
   const currentState = { ...state };
   delete userStates[chatId];
 
-  // NUEVO: Procesar URL de TikTok
   if (currentState.step === 'AWAITING_TIKTOK_URL') {
     const url = text.trim();
     if (!url.includes('tiktok.com')) {
@@ -291,7 +294,6 @@ bot.on('message', async (msg) => {
         await bot.sendVideo(chatId, videoUrl, { caption: "✅ ¡Aquí tienes tu video sin marca de agua!" });
         bot.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
 
-        // Cobrar si es necesario
         if (!isAdmin) {
           const userRef = ref(db, `users/${chatId}`);
           const userData = (await get(userRef)).val();
@@ -314,7 +316,6 @@ bot.on('message', async (msg) => {
     }
   }
 
-  // (El resto de los estados se mantienen exactamente igual...)
   else if (currentState.step === 'AWAITING_NEW_ADMIN_ID' && isPrincipal) {
     const newAdminId = text.trim();
     await set(ref(db, `sub_admins/${newAdminId}`), { agregado_por: chatId, permisos: { add_saldo: false, remove_saldo: false, create_prod: false, manage_prod: false, view_stock: false, edit_price: false } });
@@ -393,7 +394,6 @@ bot.on('callback_query', async (query) => {
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
 
-  // Todo el manejo de callback_query permanece idéntico al código anterior...
   if (data.startsWith('buy_prod:')) {
     const prodId = data.split(':')[1];
     const producto = (await get(ref(db, `productos/${prodId}`))).val();
@@ -533,4 +533,4 @@ bot.on('callback_query', async (query) => {
   responder();
 });
 
-console.log("Bot de TEMO STORE iniciado (TikTok & Referidos integrados)...");
+console.log("Bot de TEMO STORE iniciado...");
