@@ -41,7 +41,7 @@ bot.onText(/\/start/, async (msg) => {
       parse_mode: "Markdown",
       reply_markup: {
         keyboard: [
-          [{ text: "➕ Agregar Saldo" }, { text: "➖ Quitar Saldo" }], // <-- NUEVO BOTÓN
+          [{ text: "➕ Agregar Saldo" }, { text: "➖ Quitar Saldo" }],
           [{ text: "📦 Crear Producto" }, { text: "📋 Gestionar Productos" }]
         ],
         resize_keyboard: true, 
@@ -113,7 +113,6 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(chatId, "Envía el **ID del usuario** para recargarle saldo:", { parse_mode: "Markdown" });
     }
 
-    // --- NUEVA FUNCIÓN: QUITAR SALDO ---
     if (text === "➖ Quitar Saldo") {
       const usersSnap = await get(ref(db, 'users'));
       if (!usersSnap.exists()) return bot.sendMessage(chatId, "No hay usuarios registrados en la base de datos.");
@@ -186,7 +185,7 @@ bot.on('message', async (msg) => {
     delete userStates[chatId];
   }
 
-  // --- NUEVOS ESTADOS PARA QUITAR SALDO ---
+  // ESTADOS PARA QUITAR SALDO
   else if (state.step === 'AWAITING_REMOVE_USER_ID') {
     const targetUserId = text.trim();
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
@@ -213,7 +212,7 @@ bot.on('message', async (msg) => {
     const currentBalance = (await get(targetRef)).val() || 0;
 
     let nuevoSaldo = currentBalance - amount;
-    if (nuevoSaldo < 0) nuevoSaldo = 0; // Evita que el saldo quede en negativo (-10 por ejemplo)
+    if (nuevoSaldo < 0) nuevoSaldo = 0;
 
     await set(targetRef, nuevoSaldo);
     bot.sendMessage(chatId, `✅ Saldo descontado correctamente. Nuevo saldo del usuario: $${nuevoSaldo}`);
@@ -221,7 +220,7 @@ bot.on('message', async (msg) => {
     delete userStates[chatId];
   }
 
-  // RESTO DE LOS ESTADOS ORIGINALES
+  // ESTADOS PARA PRODUCTOS Y KEYS
   else if (state.step === 'AWAITING_PROD_NAME') {
     const newProdRef = push(ref(db, 'productos'));
     await set(newProdRef, { nombre: text.trim() });
@@ -304,13 +303,16 @@ bot.on('callback_query', async (query) => {
     const prodId = partes[1];
     const optId = partes[2];
     
-    const [userSnap, optSnap] = await Promise.all([
+    // Obtenemos los datos del usuario, de la opción Y AHORA EL NOMBRE DEL PRODUCTO
+    const [userSnap, optSnap, prodNameSnap] = await Promise.all([
       get(ref(db, `users/${chatId}`)),
-      get(ref(db, `productos/${prodId}/opciones/${optId}`))
+      get(ref(db, `productos/${prodId}/opciones/${optId}`)),
+      get(ref(db, `productos/${prodId}/nombre`))
     ]);
 
     const user = userSnap.val() || { saldo: 0 };
     const opt = optSnap.val() || {};
+    const prodNombre = prodNameSnap.exists() ? prodNameSnap.val() : "Producto";
 
     let keysDisponibles = opt.keys || [];
     if (!Array.isArray(keysDisponibles)) keysDisponibles = Object.values(keysDisponibles);
@@ -344,6 +346,18 @@ bot.on('callback_query', async (query) => {
 
     const tituloOpt = opt.titulo || "Opción";
     bot.sendMessage(chatId, `✅ *¡COMPRA EXITOSA!*\n\nCompraste: *${tituloOpt}*\nAquí está tu Key:\n\n\`${keyEntregada}\`\n\n💰 Tu nuevo saldo es: $${nuevoSaldo}`, { parse_mode: "Markdown" });
+    
+    // --- NUEVO: AVISAR A LOS ADMINS SI SE QUEDARON SIN KEYS ---
+    if (nuevasKeysProd.length === 0) {
+      admins.forEach((adminId) => {
+        bot.sendMessage(
+          adminId, 
+          `⚠️ *ALERTA DE INVENTARIO*\n\nSe han agotado las keys.\n\n📦 *Producto:* ${prodNombre}\n⏱ *Duración:* ${tituloOpt}\n\nPor favor recarga más keys para seguir vendiendo.`, 
+          { parse_mode: "Markdown" }
+        ).catch(() => {}); // catch por si algún admin bloqueó al bot y evita que crashee
+      });
+    }
+
     return responder();
   }
 
