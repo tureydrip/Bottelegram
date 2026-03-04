@@ -36,7 +36,6 @@ bot.onText(/\/start/, async (msg) => {
   }
 
   if (admins.includes(chatId)) {
-    // MENÚ PARA ADMIN (Abajo en el teclado)
     bot.sendMessage(chatId, `👑 *Panel de Administrador* | Hola ${username}`, {
       parse_mode: "Markdown",
       reply_markup: {
@@ -49,7 +48,6 @@ bot.onText(/\/start/, async (msg) => {
       }
     });
   } else {
-    // MENÚ PARA USUARIO (Abajo en el teclado)
     bot.sendMessage(chatId, `👋 Hola ${username}, ¡Bienvenido a *TEMO STORE*!\n\nUsa el menú de abajo para navegar:`, {
       parse_mode: "Markdown",
       reply_markup: {
@@ -70,9 +68,8 @@ bot.on('message', async (msg) => {
   const text = msg.text;
   const isAdmin = admins.includes(chatId);
 
-  if (!text) return; // Si envían un sticker o imagen, lo ignora
+  if (!text) return;
 
-  // --- BOTONES DEL MENÚ DE USUARIO ---
   if (text === "👤 Mi Perfil") {
     const userData = (await get(ref(db, `users/${chatId}`))).val() || { saldo: 0 };
     let texto = `👤 *Tu Perfil*\n\n💰 Saldo: $${userData.saldo}\n🆔 Tu ID: \`${chatId}\`\n\n🔑 *Tus Keys Compradas:*\n`;
@@ -106,7 +103,6 @@ bot.on('message', async (msg) => {
     });
   }
 
-  // --- BOTONES DEL MENÚ DE ADMIN ---
   if (isAdmin) {
     if (text === "➕ Agregar Saldo") {
       userStates[chatId] = { step: 'AWAITING_USER_ID' };
@@ -155,22 +151,18 @@ bot.on('message', async (msg) => {
     }
   }
 
-  // --- LÓGICA DE ESTADOS (Respuestas a lo que pide el bot) ---
+  // --- LÓGICA DE ESTADOS ---
   const state = userStates[chatId];
   if (!state || text.startsWith('/')) return;
 
-  // ¡SOLUCIÓN AL BUG DE DOBLE RESPUESTA!
-  // Clonamos el estado actual y lo borramos INMEDIATAMENTE de la memoria.
-  // Así, si llega un segundo mensaje duplicado por error, será ignorado.
   const currentState = { ...state };
   delete userStates[chatId];
 
-  // ESTADOS PARA AGREGAR SALDO
   if (currentState.step === 'AWAITING_USER_ID') {
     const targetUserId = text.trim();
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
     if (userSnapshot.exists()) {
-      userStates[chatId] = { step: 'AWAITING_AMOUNT', targetUserId }; // Pasamos al siguiente paso
+      userStates[chatId] = { step: 'AWAITING_AMOUNT', targetUserId }; 
       const nombreUsuario = userSnapshot.val().nombre || "Usuario";
       bot.sendMessage(chatId, `Usuario: ${nombreUsuario}. ¿Cuánto saldo agregas? (Escribe el número)`);
     } else {
@@ -180,7 +172,7 @@ bot.on('message', async (msg) => {
   else if (currentState.step === 'AWAITING_AMOUNT') {
     const amount = parseFloat(text.trim());
     if (isNaN(amount)) {
-      userStates[chatId] = currentState; // Restauramos el estado si se equivocó
+      userStates[chatId] = currentState; 
       return bot.sendMessage(chatId, "❌ Escribe un número válido.");
     }
 
@@ -191,7 +183,6 @@ bot.on('message', async (msg) => {
     bot.sendMessage(currentState.targetUserId, `🎉 ¡Te han recargado $${amount} de saldo!`);
   }
 
-  // ESTADOS PARA QUITAR SALDO
   else if (currentState.step === 'AWAITING_REMOVE_USER_ID') {
     const targetUserId = text.trim();
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
@@ -201,7 +192,7 @@ bot.on('message', async (msg) => {
       if (userData.saldo <= 0) {
         return bot.sendMessage(chatId, "❌ Este usuario ya tiene $0 de saldo.");
       }
-      userStates[chatId] = { step: 'AWAITING_REMOVE_AMOUNT', targetUserId }; // Pasamos al siguiente paso
+      userStates[chatId] = { step: 'AWAITING_REMOVE_AMOUNT', targetUserId }; 
       bot.sendMessage(chatId, `Usuario: ${userData.nombre || "Usuario"} (Saldo actual: $${userData.saldo}).\n¿Cuánto saldo le deseas quitar? (Escribe solo el número)`);
     } else {
       bot.sendMessage(chatId, "❌ Usuario no encontrado. Intenta de nuevo presionando '➖ Quitar Saldo'.");
@@ -210,7 +201,7 @@ bot.on('message', async (msg) => {
   else if (currentState.step === 'AWAITING_REMOVE_AMOUNT') {
     const amount = parseFloat(text.trim());
     if (isNaN(amount) || amount <= 0) {
-      userStates[chatId] = currentState; // Restauramos el estado si se equivocó
+      userStates[chatId] = currentState; 
       return bot.sendMessage(chatId, "❌ Escribe un número válido mayor a 0.");
     }
 
@@ -225,7 +216,6 @@ bot.on('message', async (msg) => {
     bot.sendMessage(currentState.targetUserId, `⚠️ Se han descontado $${amount} de tu saldo. Tu saldo actual es de: $${nuevoSaldo}`);
   }
 
-  // ESTADOS PARA PRODUCTOS Y KEYS
   else if (currentState.step === 'AWAITING_PROD_NAME') {
     const newProdRef = push(ref(db, 'productos'));
     await set(newProdRef, { nombre: text.trim() });
@@ -234,7 +224,7 @@ bot.on('message', async (msg) => {
   else if (currentState.step === 'AWAITING_OPT_NAME') {
     const match = text.match(/(.+?)\s+(\d+)\$$/); 
     if (!match) {
-      userStates[chatId] = currentState; // Restauramos el estado si el formato es malo
+      userStates[chatId] = currentState; 
       return bot.sendMessage(chatId, "⚠️ Formato incorrecto. Ejemplo: '1 dia 3$'. Intenta de nuevo.");
     }
 
@@ -262,7 +252,7 @@ bot.on('message', async (msg) => {
   }
 });
 
-// --- 5. MANEJO DE BOTONES EN LÍNEA (CALLBACKS PARA SUBMENÚS) ---
+// --- 5. MANEJO DE BOTONES EN LÍNEA ---
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
@@ -270,7 +260,6 @@ bot.on('callback_query', async (query) => {
 
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
 
-  // --- MOSTRAR PRECIOS DE UN PRODUCTO AL USUARIO ---
   if (data.startsWith('buy_prod:')) {
     const prodId = data.split(':')[1];
     const prodSnap = await get(ref(db, `productos/${prodId}`));
@@ -302,7 +291,6 @@ bot.on('callback_query', async (query) => {
     return responder();
   }
 
-  // --- COMPRAR PRODUCTO (CHECKOUT) ---
   if (data.startsWith('checkout:')) {
     const partes = data.split(':');
     const prodId = partes[1];
@@ -351,7 +339,6 @@ bot.on('callback_query', async (query) => {
     const tituloOpt = opt.titulo || "Opción";
     bot.sendMessage(chatId, `✅ *¡COMPRA EXITOSA!*\n\nCompraste: *${tituloOpt}*\nAquí está tu Key:\n\n\`${keyEntregada}\`\n\n💰 Tu nuevo saldo es: $${nuevoSaldo}`, { parse_mode: "Markdown" });
     
-    // --- AVISAR A LOS ADMINS SI SE QUEDARON SIN KEYS ---
     if (nuevasKeysProd.length === 0) {
       admins.forEach((adminId) => {
         bot.sendMessage(
@@ -377,9 +364,37 @@ bot.on('callback_query', async (query) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "➕ Agregar Duración/Precio", callback_data: `add_opt:${prodId}` }],
+            // --- NUEVO BOTÓN AQUÍ ---
+            [{ text: "🔑 Agregar Keys a Duración", callback_data: `choose_opt_keys:${prodId}` }],
             [{ text: "🗑️ Eliminar Producto", callback_data: `del_prod:${prodId}` }]
           ]
         }
+      });
+    }
+
+    // --- NUEVA LÓGICA PARA ELEGIR A QUÉ DURACIÓN METERLE KEYS ---
+    if (data.startsWith('choose_opt_keys:')) {
+      const prodId = data.split(':')[1];
+      const prodSnap = await get(ref(db, `productos/${prodId}`));
+      
+      if (!prodSnap.exists() || !prodSnap.val().opciones) {
+         bot.sendMessage(chatId, "⚠️ Este producto no tiene duraciones/precios creados todavía. Usa 'Agregar Duración/Precio' primero.");
+         return responder();
+      }
+
+      const opciones = prodSnap.val().opciones;
+      const botones = [];
+      
+      for (const optId in opciones) {
+        const opt = opciones[optId];
+        const titulo = opt.titulo || "Opción";
+        const precio = opt.precio || 0;
+        // Reusamos el callback `add_keys` que ya estaba programado
+        botones.push([{ text: `🔑 ${titulo} - $${precio}`, callback_data: `add_keys:${prodId}:${optId}` }]);
+      }
+
+      bot.sendMessage(chatId, "Selecciona a qué duración le quieres agregar las keys:", {
+        reply_markup: { inline_keyboard: botones }
       });
     }
 
