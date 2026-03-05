@@ -73,15 +73,41 @@ async function getTikTokVideo(url) {
   }
 }
 
+// --- NUEVA FUNCIÓN PARA CONTAR USUARIOS DEL BOT 2 ---
+async function getAndTrackTiktokUsers(chatId) {
+  const userRef = ref(db, `tiktok_bot_users/${chatId}`);
+  const userSnap = await get(userRef);
+  const statsRef = ref(db, `tiktok_bot_stats/total_users`);
+  
+  let totalUsers = 0;
+  const statsSnap = await get(statsRef);
+  if (statsSnap.exists()) {
+    totalUsers = statsSnap.val();
+  }
+
+  // Si el usuario no existe en la base de datos del bot 2, lo registramos y sumamos 1
+  if (!userSnap.exists()) {
+    totalUsers += 1;
+    await set(userRef, true);
+    await set(statsRef, totalUsers);
+  }
+  return totalUsers;
+}
+
 // ==========================================
 // ====== LÓGICA DEL BOT 2 (TIKTOK GRATIS) ==
 // ==========================================
 
-botTiktok.onText(/\/start/, (msg) => {
+// Se cambió a async para poder consultar la base de datos
+botTiktok.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
+  
+  // Obtenemos el total de usuarios (y registramos al actual si es nuevo)
+  const totalUsuarios = await getAndTrackTiktokUsers(chatId);
   
   const mensaje = "🤖 *Este bot está 100% programado por sebastian (LUCK XIT OFC)*\n\n" +
                   "👋 ¡Hola! Soy un bot totalmente gratuito para descargar videos de TikTok.\n\n" +
+                  `📊 *Usuarios totales que me usan:* ${totalUsuarios}\n\n` +
                   "📖 *¿Cómo usar el bot?*\n" +
                   "Simplemente cópiame y envíame un enlace válido de TikTok (ejemplo: `https://vm.tiktok.com/...`) y yo me encargaré de enviarte el video sin marca de agua al instante. 🚀";
 
@@ -105,13 +131,17 @@ botTiktok.on('message', async (msg) => {
   // Ignorar si no hay texto o si es un comando (como /start)
   if (!text || text.startsWith('/')) return;
 
+  // Actualizamos estadísticas por si el usuario envió un enlace sin usar /start antes
+  const totalUsuarios = await getAndTrackTiktokUsers(chatId);
+
   if (text.includes('tiktok.com')) {
     const waitMsg = await botTiktok.sendMessage(chatId, "⏳ Descargando video sin marca de agua, por favor espera...");
     const videoUrl = await getTikTokVideo(text.trim());
 
     if (videoUrl) {
       try {
-        await botTiktok.sendVideo(chatId, videoUrl, { caption: "✅ ¡Aquí tienes tu video gratis!\n\n🤖 _Bot by: sebastian (LUCK XIT OFC)_", parse_mode: "Markdown" });
+        // Se agregó el contador también aquí para que lo vean al descargar
+        await botTiktok.sendVideo(chatId, videoUrl, { caption: `✅ ¡Aquí tienes tu video gratis!\n\n📊 *Usuarios totales en tiempo real:* ${totalUsuarios}\n🤖 _Bot by: sebastian (LUCK XIT OFC)_`, parse_mode: "Markdown" });
         botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
       } catch (error) {
         botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
