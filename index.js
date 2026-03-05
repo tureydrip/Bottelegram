@@ -16,20 +16,27 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// --- 2. CONFIGURACIÓN DEL BOT ---
-const token = '8240591970:AAEAPtTNdanUdR0tXZDjFC9hcdxsdmQFuGI'; // ¡Pon tu Token aquí!
+// --- 2. CONFIGURACIÓN DE LOS BOTS ---
+
+// BOT 1: TEMO STORE (Bot Original)
+const token = '8240591970:AAEAPtTNdanUdR0tXZDjFC9hcdxsdmQFuGI'; 
 const bot = new TelegramBot(token, { polling: true });
 
+// BOT 2: TIKTOK GRATIS (Bot Nuevo)
+const tokenTiktok = '8038521927:AAH32NbJJwzNgZTResVyHi24kVycRhPRt7U';
+const botTiktok = new TelegramBot(tokenTiktok, { polling: true });
+
+// Variables globales del Bot 1
 const PRINCIPAL_ADMINS = [8182510987, 7710633235, 5706003078];
 const WHATSAPP_URL = "https://wa.me/523224528803";
-const COSTO_TIKTOK = 0.05; // $0.05 por video = $0.10 por 2 videos
+const COSTO_TIKTOK = 0.05; 
 const userStates = {};
 
-// Obtenemos info del bot para los links de referidos
 let botUsername = "";
 bot.getMe().then(info => botUsername = info.username);
 
-// Función auxiliar para verificar permisos
+// --- FUNCIONES COMPARTIDAS ---
+
 async function checkAdminPermissions(chatId) {
   const isPrincipal = PRINCIPAL_ADMINS.includes(chatId);
   const subAdminsSnap = await get(ref(db, 'sub_admins'));
@@ -48,7 +55,6 @@ async function checkAdminPermissions(chatId) {
   return { isPrincipal, isSubAdmin, isAdmin, hasPermission };
 }
 
-// Función para descargar TikTok usando TIKWM
 async function getTikTokVideo(url) {
   try {
     const response = await fetch("https://www.tikwm.com/api/", {
@@ -67,20 +73,61 @@ async function getTikTokVideo(url) {
   }
 }
 
+// ==========================================
+// ====== LÓGICA DEL BOT 2 (TIKTOK GRATIS) ==
+// ==========================================
+
+botTiktok.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  botTiktok.sendMessage(chatId, "👋 ¡Hola! Soy un bot gratuito para descargar videos de TikTok.\n\nSimplemente envíame un enlace válido de TikTok y te enviaré el video sin marca de agua al instante. 🚀");
+});
+
+botTiktok.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text;
+
+  // Ignorar si no hay texto o si es un comando (como /start)
+  if (!text || text.startsWith('/')) return;
+
+  if (text.includes('tiktok.com')) {
+    const waitMsg = await botTiktok.sendMessage(chatId, "⏳ Descargando video sin marca de agua, por favor espera...");
+    const videoUrl = await getTikTokVideo(text.trim());
+
+    if (videoUrl) {
+      try {
+        await botTiktok.sendVideo(chatId, videoUrl, { caption: "✅ ¡Aquí tienes tu video gratis!" });
+        botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
+      } catch (error) {
+        botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
+        botTiktok.sendMessage(chatId, "❌ Error al enviar el video. Puede que sea demasiado pesado para Telegram.");
+      }
+    } else {
+      botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
+      botTiktok.sendMessage(chatId, "❌ Error al procesar el enlace. Asegúrate de que el video sea público y el enlace esté correcto.");
+    }
+  } else {
+    // Si envían texto que no es de tiktok
+    botTiktok.sendMessage(chatId, "⚠️ Por favor, envíame un enlace válido de TikTok.");
+  }
+});
+
+
+// ==========================================
+// ====== LÓGICA DEL BOT 1 (TEMO STORE) =====
+// ==========================================
+
 // --- 3. COMANDO /START ---
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const username = msg.from.first_name || "Usuario";
-  const refId = match[1]; // ID de quien lo invitó
+  const refId = match[1]; 
 
   const userRef = ref(db, `users/${chatId}`);
   const snapshot = await get(userRef);
   
-  // Si es un usuario nuevo
   if (!snapshot.exists()) {
     await set(userRef, { nombre: username, saldo: 0, keys_compradas: [], invitados: 0, tiktok_credits: 0 });
     
-    // Lógica de referidos
     if (refId && refId != chatId) {
       const inviterRef = ref(db, `users/${refId}`);
       const inviterSnap = await get(inviterRef);
@@ -178,7 +225,6 @@ bot.on('message', async (msg) => {
     if (!prodsSnap.exists()) return bot.sendMessage(chatId, "No hay productos disponibles.");
     
     const botones = [];
-    // SOLUCIÓN: Agregadas las llaves {} para evitar que Firebase detenga el ciclo prematuramente
     prodsSnap.forEach((child) => {
       botones.push([{ text: `🎮 ${child.val().nombre || "Producto"}`, callback_data: `buy_prod:${child.key}` }]);
     });
@@ -237,7 +283,6 @@ bot.on('message', async (msg) => {
       const prodsSnap = await get(ref(db, 'productos'));
       if (!prodsSnap.exists()) return bot.sendMessage(chatId, "No hay productos.");
       const botones = [];
-      // SOLUCIÓN: Agregadas las llaves {}
       prodsSnap.forEach((child) => {
         botones.push([{ text: `Editar/Eliminar ${child.val().nombre || "Producto"}`, callback_data: `edit_prod:${child.key}` }]);
       });
@@ -266,7 +311,6 @@ bot.on('message', async (msg) => {
       const prodsSnap = await get(ref(db, 'productos'));
       if (!prodsSnap.exists()) return bot.sendMessage(chatId, "No hay productos.");
       const botones = [];
-      // SOLUCIÓN: Agregadas las llaves {}
       prodsSnap.forEach((child) => {
         botones.push([{ text: `✏️ Editar precios de ${child.val().nombre || "Producto"}`, callback_data: `edit_price_prod:${child.key}` }]);
       });
@@ -533,4 +577,5 @@ bot.on('callback_query', async (query) => {
   responder();
 });
 
-console.log("Bot de TEMO STORE iniciado...");
+console.log("Bot TEMO STORE iniciado...");
+console.log("Bot TIKTOK GRATIS iniciado...");
