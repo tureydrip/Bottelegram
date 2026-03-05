@@ -79,7 +79,23 @@ async function getTikTokVideo(url) {
 
 botTiktok.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  botTiktok.sendMessage(chatId, "👋 ¡Hola! Soy un bot gratuito para descargar videos de TikTok.\n\nSimplemente envíame un enlace válido de TikTok y te enviaré el video sin marca de agua al instante. 🚀");
+  
+  const mensaje = "🤖 *Este bot está 100% programado por sebastian (LUCK XIT OFC)*\n\n" +
+                  "👋 ¡Hola! Soy un bot totalmente gratuito para descargar videos de TikTok.\n\n" +
+                  "📖 *¿Cómo usar el bot?*\n" +
+                  "Simplemente cópiame y envíame un enlace válido de TikTok (ejemplo: `https://vm.tiktok.com/...`) y yo me encargaré de enviarte el video sin marca de agua al instante. 🚀";
+
+  const opciones = {
+    parse_mode: "Markdown",
+    disable_web_page_preview: true,
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "📞 Contacto en WhatsApp", url: "https://wa.me/573142369516" }]
+      ]
+    }
+  };
+
+  botTiktok.sendMessage(chatId, mensaje, opciones);
 });
 
 botTiktok.on('message', async (msg) => {
@@ -95,7 +111,7 @@ botTiktok.on('message', async (msg) => {
 
     if (videoUrl) {
       try {
-        await botTiktok.sendVideo(chatId, videoUrl, { caption: "✅ ¡Aquí tienes tu video gratis!" });
+        await botTiktok.sendVideo(chatId, videoUrl, { caption: "✅ ¡Aquí tienes tu video gratis!\n\n🤖 _Bot by: sebastian (LUCK XIT OFC)_", parse_mode: "Markdown" });
         botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
       } catch (error) {
         botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
@@ -194,6 +210,7 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
+  // Si es un mensaje del bot 2 o un comando, lo ignoramos para no mezclar eventos
   if (!text || text.startsWith('/')) return;
 
   const { isAdmin, isPrincipal, hasPermission } = await checkAdminPermissions(chatId);
