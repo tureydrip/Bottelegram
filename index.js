@@ -163,7 +163,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     await set(userRef, { nombre: username, saldo: 0, keys_compradas: [], invitados: 0, tiktok_credits: 0 });
     
     if (refId && refId != chatId) {
-      const inviterRealId = await getRealId(refId); // Por si el invitador es una cuenta vinculada
+      const inviterRealId = await getRealId(refId); 
       const inviterRef = ref(db, `users/${inviterRealId}`);
       const inviterSnap = await get(inviterRef);
       if (inviterSnap.exists()) {
@@ -225,12 +225,12 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         resize_keyboard: true, is_persistent: true
       }
     });
+  }
 
-    // Mensaje automático si no tienen credenciales creadas
-    const userDataStart = (await get(userRef)).val();
-    if (userDataStart && !userDataStart.username_login && !userDataStart.main_account) {
-       bot.sendMessage(chatId, "⚠️ *Consejo:* Aún no tienes un Usuario y Contraseña.\nEntra a **👤 Mi Perfil** y créalos para poder acceder a tu saldo e historial desde cualquier otra cuenta de Telegram sin perder tus datos.", {parse_mode: "Markdown"});
-    }
+  // MENSAJE AUTOMÁTICO PARA TODOS (Admins y Usuarios) que no tengan credenciales
+  const userDataStart = (await get(userRef)).val();
+  if (userDataStart && !userDataStart.username_login && !userDataStart.main_account) {
+     bot.sendMessage(chatId, "⚠️ *Aviso Importante:* Aún no has creado un Usuario y Contraseña.\n\nVe a **👤 Mi Perfil** y créalos. Esto te permitirá acceder a tu cuenta, saldo e historial desde cualquier otro Telegram en el futuro sin perder tus datos.", {parse_mode: "Markdown"});
   }
 });
 
