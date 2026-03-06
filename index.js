@@ -37,6 +37,12 @@ bot.getMe().then(info => botUsername = info.username);
 
 // --- FUNCIONES COMPARTIDAS ---
 
+// NUEVA FUNCIÓN: Obtiene el ID maestro si la cuenta está vinculada
+async function getRealId(chatId) {
+  const snap = await get(ref(db, `users/${chatId}/main_account`));
+  return snap.exists() ? snap.val() : chatId;
+}
+
 async function checkAdminPermissions(chatId) {
   const isPrincipal = PRINCIPAL_ADMINS.includes(chatId);
   const subAdminsSnap = await get(ref(db, 'sub_admins'));
@@ -73,7 +79,6 @@ async function getTikTokVideo(url) {
   }
 }
 
-// --- NUEVA FUNCIÓN PARA CONTAR USUARIOS DEL BOT 2 ---
 async function getAndTrackTiktokUsers(chatId) {
   const userRef = ref(db, `tiktok_bot_users/${chatId}`);
   const userSnap = await get(userRef);
@@ -85,7 +90,6 @@ async function getAndTrackTiktokUsers(chatId) {
     totalUsers = statsSnap.val();
   }
 
-  // Si el usuario no existe en la base de datos del bot 2, lo registramos y sumamos 1
   if (!userSnap.exists()) {
     totalUsers += 1;
     await set(userRef, true);
@@ -98,11 +102,8 @@ async function getAndTrackTiktokUsers(chatId) {
 // ====== LÓGICA DEL BOT 2 (TIKTOK GRATIS) ==
 // ==========================================
 
-// Se cambió a async para poder consultar la base de datos
 botTiktok.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  
-  // Obtenemos el total de usuarios (y registramos al actual si es nuevo)
   const totalUsuarios = await getAndTrackTiktokUsers(chatId);
   
   const mensaje = "🤖 *Este bot está 100% programado por sebastian (LUCK XIT OFC)*\n\n" +
@@ -111,27 +112,15 @@ botTiktok.onText(/\/start/, async (msg) => {
                   "📖 *¿Cómo usar el bot?*\n" +
                   "Simplemente cópiame y envíame un enlace válido de TikTok (ejemplo: `https://vm.tiktok.com/...`) y yo me encargaré de enviarte el video sin marca de agua al instante. 🚀";
 
-  const opciones = {
-    parse_mode: "Markdown",
-    disable_web_page_preview: true,
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "📞 Contacto en WhatsApp", url: "https://wa.me/573142369516" }]
-      ]
-    }
-  };
-
+  const opciones = { parse_mode: "Markdown", disable_web_page_preview: true, reply_markup: { inline_keyboard: [[{ text: "📞 Contacto en WhatsApp", url: "https://wa.me/573142369516" }]] } };
   botTiktok.sendMessage(chatId, mensaje, opciones);
 });
 
 botTiktok.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
-
-  // Ignorar si no hay texto o si es un comando (como /start)
   if (!text || text.startsWith('/')) return;
 
-  // Actualizamos estadísticas por si el usuario envió un enlace sin usar /start antes
   const totalUsuarios = await getAndTrackTiktokUsers(chatId);
 
   if (text.includes('tiktok.com')) {
@@ -140,7 +129,6 @@ botTiktok.on('message', async (msg) => {
 
     if (videoUrl) {
       try {
-        // Se agregó el contador también aquí para que lo vean al descargar
         await botTiktok.sendVideo(chatId, videoUrl, { caption: `✅ ¡Aquí tienes tu video gratis!\n\n📊 *Usuarios totales en tiempo real:* ${totalUsuarios}\n🤖 _Bot by: sebastian (LUCK XIT OFC)_`, parse_mode: "Markdown" });
         botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
       } catch (error) {
@@ -152,7 +140,6 @@ botTiktok.on('message', async (msg) => {
       botTiktok.sendMessage(chatId, "❌ Error al procesar el enlace. Asegúrate de que el video sea público y el enlace esté correcto.");
     }
   } else {
-    // Si envían texto que no es de tiktok
     botTiktok.sendMessage(chatId, "⚠️ Por favor, envíame un enlace válido de TikTok.");
   }
 });
@@ -168,14 +155,16 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const username = msg.from.first_name || "Usuario";
   const refId = match[1]; 
 
-  const userRef = ref(db, `users/${chatId}`);
+  const realId = await getRealId(chatId);
+  const userRef = ref(db, `users/${realId}`);
   const snapshot = await get(userRef);
   
   if (!snapshot.exists()) {
     await set(userRef, { nombre: username, saldo: 0, keys_compradas: [], invitados: 0, tiktok_credits: 0 });
     
     if (refId && refId != chatId) {
-      const inviterRef = ref(db, `users/${refId}`);
+      const inviterRealId = await getRealId(refId); // Por si el invitador es una cuenta vinculada
+      const inviterRef = ref(db, `users/${inviterRealId}`);
       const inviterSnap = await get(inviterRef);
       if (inviterSnap.exists()) {
         let inviterData = inviterSnap.val();
@@ -184,9 +173,9 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
         if (nuevosInvitados % 5 === 0) {
           nuevosCreditos += 2;
-          bot.sendMessage(refId, `🎉 *¡Felicidades!*\nHas llegado a ${nuevosInvitados} invitados y ganaste **2 Créditos** para descargar TikToks gratis.`, { parse_mode: "Markdown" });
+          bot.sendMessage(inviterRealId, `🎉 *¡Felicidades!*\nHas llegado a ${nuevosInvitados} invitados y ganaste **2 Créditos** para descargar TikToks gratis.`, { parse_mode: "Markdown" });
         } else {
-          bot.sendMessage(refId, `👤 Un nuevo usuario entró con tu enlace. (Llevas ${nuevosInvitados} invitados).`);
+          bot.sendMessage(inviterRealId, `👤 Un nuevo usuario entró con tu enlace. (Llevas ${nuevosInvitados} invitados).`);
         }
         await update(inviterRef, { invitados: nuevosInvitados, tiktok_credits: nuevosCreditos });
       }
@@ -236,6 +225,12 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
         resize_keyboard: true, is_persistent: true
       }
     });
+
+    // Mensaje automático si no tienen credenciales creadas
+    const userDataStart = (await get(userRef)).val();
+    if (userDataStart && !userDataStart.username_login && !userDataStart.main_account) {
+       bot.sendMessage(chatId, "⚠️ *Consejo:* Aún no tienes un Usuario y Contraseña.\nEntra a **👤 Mi Perfil** y créalos para poder acceder a tu saldo e historial desde cualquier otra cuenta de Telegram sin perder tus datos.", {parse_mode: "Markdown"});
+    }
   }
 });
 
@@ -244,18 +239,22 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Si es un mensaje del bot 2 o un comando, lo ignoramos para no mezclar eventos
   if (!text || text.startsWith('/')) return;
 
   const { isAdmin, isPrincipal, hasPermission } = await checkAdminPermissions(chatId);
 
   if (text === "👤 Mi Perfil") {
-    const userData = (await get(ref(db, `users/${chatId}`))).val() || { saldo: 0, invitados: 0, tiktok_credits: 0 };
-    const linkReferido = `https://t.me/${botUsername}?start=${chatId}`;
+    const realId = await getRealId(chatId);
+    const userData = (await get(ref(db, `users/${realId}`))).val() || { saldo: 0, invitados: 0, tiktok_credits: 0 };
+    const linkReferido = `https://t.me/${botUsername}?start=${realId}`;
 
-    let texto = `👤 *Tu Perfil*\n\n💰 Saldo: $${userData.saldo}\n🆔 Tu ID: \`${chatId}\`\n\n`;
-    texto += `📱 *TikTok Downloader:*\n- Créditos disponibles: ${userData.tiktok_credits}\n- Personas invitadas: ${userData.invitados}\n\n`;
-    texto += `🔗 *Tu link de referidos:*\n\`${linkReferido}\`\n_(Invita a 5 personas con este link para ganar 2 créditos para videos gratis)_\n\n`;
+    let texto = `👤 *Tu Perfil*\n\n💰 Saldo: $${userData.saldo}\n🆔 Tu ID Principal: \`${realId}\`\n`;
+    if (chatId.toString() !== realId.toString()) {
+      texto += `🔗 _Sesión vinculada desde ID local: ${chatId}_\n`;
+    }
+    
+    texto += `\n📱 *TikTok Downloader:*\n- Créditos disponibles: ${userData.tiktok_credits}\n- Personas invitadas: ${userData.invitados}\n\n`;
+    texto += `🔗 *Tu link de referidos:*\n\`${linkReferido}\`\n_(Invita a 5 personas con este link para ganar 2 créditos)_\n\n`;
     texto += `🔑 *Tus Keys Compradas:*\n`;
     
     let keysArr = userData.keys_compradas || [];
@@ -266,14 +265,21 @@ bot.on('message', async (msg) => {
         if (typeof k === 'object') {
           texto += `- \`${k.key}\` (Gastaste: $${k.gasto})\n`;
         } else {
-          texto += `- \`${k}\`\n`; // Para compatibilidad con keys antiguas
+          texto += `- \`${k}\`\n`; 
         }
       });
     } else {
       texto += "Aún no tienes keys.";
     }
     
-    return bot.sendMessage(chatId, texto, { parse_mode: "Markdown", disable_web_page_preview: true });
+    // Botones de login/registro
+    let inlineBtns = [];
+    if (!userData.username_login && !userData.main_account) {
+      inlineBtns.push([{ text: "🔐 Crear Cuenta (Usuario/Contraseña)", callback_data: "create_account" }]);
+    }
+    inlineBtns.push([{ text: "🔄 Acceder desde otra cuenta", callback_data: "login_account" }]);
+
+    return bot.sendMessage(chatId, texto, { parse_mode: "Markdown", disable_web_page_preview: true, reply_markup: { inline_keyboard: inlineBtns } });
   }
 
   if (text === "💳 Recargar Saldo") {
@@ -297,8 +303,9 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(chatId, "👑 *Modo Admin:* Envía el enlace del video de TikTok (Descarga gratuita):", { parse_mode: "Markdown" });
     }
 
-    const userData = (await get(ref(db, `users/${chatId}`))).val() || { saldo: 0, tiktok_credits: 0 };
-    const linkReferido = `https://t.me/${botUsername}?start=${chatId}`;
+    const realId = await getRealId(chatId);
+    const userData = (await get(ref(db, `users/${realId}`))).val() || { saldo: 0, tiktok_credits: 0 };
+    const linkReferido = `https://t.me/${botUsername}?start=${realId}`;
 
     if (userData.tiktok_credits > 0) {
       userStates[chatId] = { step: 'AWAITING_TIKTOK_URL', cost: 0, useCredit: true };
@@ -327,7 +334,7 @@ bot.on('message', async (msg) => {
       const usersSnap = await get(ref(db, 'users'));
       if (!usersSnap.exists()) return bot.sendMessage(chatId, "No hay usuarios registrados.");
       let lista = "👥 *Usuarios con saldo disponible:*\n\n", hay = false;
-      usersSnap.forEach((child) => { const user = child.val(); if (user.saldo > 0) { lista += `👤 *${user.nombre}*\n🆔 ID: \`${child.key}\`\n💰 Saldo: $${user.saldo}\n\n`; hay = true; } });
+      usersSnap.forEach((child) => { const user = child.val(); if (user.saldo > 0 && !user.main_account) { lista += `👤 *${user.nombre}*\n🆔 ID: \`${child.key}\`\n💰 Saldo: $${user.saldo}\n\n`; hay = true; } });
       if (!hay) return bot.sendMessage(chatId, "❌ Nadie tiene saldo.");
       lista += "Para quitar saldo, envía el **ID del usuario**:";
       userStates[chatId] = { step: 'AWAITING_REMOVE_USER_ID' };
@@ -396,7 +403,52 @@ bot.on('message', async (msg) => {
   const currentState = { ...state };
   delete userStates[chatId];
 
-  if (currentState.step === 'AWAITING_TIKTOK_URL') {
+  // LOGICA PARA CREAR CUENTA
+  if (currentState.step === 'AWAITING_NEW_USERNAME') {
+    const userStr = text.trim().toLowerCase();
+    if (userStr.includes(" ")) {
+      userStates[chatId] = currentState;
+      return bot.sendMessage(chatId, "❌ El usuario no debe contener espacios. Intenta de nuevo:");
+    }
+    const userExist = await get(ref(db, `logins/${userStr}`));
+    if (userExist.exists()) {
+      userStates[chatId] = currentState;
+      return bot.sendMessage(chatId, "❌ Ese nombre de usuario ya está en uso. Escribe otro distinto:");
+    }
+    userStates[chatId] = { step: 'AWAITING_NEW_PASSWORD', username: userStr };
+    bot.sendMessage(chatId, `✅ Usuario *${userStr}* disponible.\n\n🔑 Ahora, escribe una **Contraseña** segura:`, {parse_mode:"Markdown"});
+  }
+  else if (currentState.step === 'AWAITING_NEW_PASSWORD') {
+    const passStr = text.trim();
+    const realId = await getRealId(chatId);
+    await update(ref(db, `users/${realId}`), { username_login: currentState.username });
+    await set(ref(db, `logins/${currentState.username}`), { chatId: realId, password: passStr });
+    bot.sendMessage(chatId, "✅ **¡Cuenta creada con éxito!**\nAhora puedes usar este usuario y contraseña para entrar desde cualquier otra cuenta de Telegram utilizando la opción *🔄 Acceder desde otra cuenta* en tu Perfil.", {parse_mode:"Markdown"});
+  }
+
+  // LOGICA PARA INICIAR SESION
+  else if (currentState.step === 'AWAITING_LOGIN_USERNAME') {
+    const userStr = text.trim().toLowerCase();
+    const loginSnap = await get(ref(db, `logins/${userStr}`));
+    if (!loginSnap.exists()) {
+      return bot.sendMessage(chatId, "❌ Usuario no encontrado. Operación cancelada.");
+    }
+    userStates[chatId] = { step: 'AWAITING_LOGIN_PASSWORD', realId: loginSnap.val().chatId, correctPass: loginSnap.val().password };
+    bot.sendMessage(chatId, "🔑 Ahora, escribe tu **Contraseña**:");
+  }
+  else if (currentState.step === 'AWAITING_LOGIN_PASSWORD') {
+    if (text.trim() === currentState.correctPass) {
+      if (chatId.toString() === currentState.realId.toString()) {
+        return bot.sendMessage(chatId, "⚠️ Esta ya es tu cuenta principal, no necesitas vincularla de nuevo.");
+      }
+      await set(ref(db, `users/${chatId}/main_account`), currentState.realId);
+      bot.sendMessage(chatId, "✅ **¡Sesión Iniciada Correctamente!**\n\nEsta cuenta de Telegram ahora está vinculada a tu cuenta principal. Todas tus compras y saldo están 100% sincronizados. 🎉", {parse_mode:"Markdown"});
+    } else {
+      bot.sendMessage(chatId, "❌ Contraseña incorrecta. Operación cancelada.");
+    }
+  }
+
+  else if (currentState.step === 'AWAITING_TIKTOK_URL') {
     const url = text.trim();
     if (!url.includes('tiktok.com')) {
       return bot.sendMessage(chatId, "❌ Enlace inválido. Debes enviar un enlace válido de TikTok.");
@@ -411,7 +463,8 @@ bot.on('message', async (msg) => {
         bot.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
 
         if (!isAdmin) {
-          const userRef = ref(db, `users/${chatId}`);
+          const realId = await getRealId(chatId);
+          const userRef = ref(db, `users/${realId}`);
           const userData = (await get(userRef)).val();
           
           if (currentState.useCredit) {
@@ -439,41 +492,43 @@ bot.on('message', async (msg) => {
   }
   else if (currentState.step === 'AWAITING_USER_ID') {
     const targetUserId = text.trim();
-    const userSnapshot = await get(ref(db, `users/${targetUserId}`));
+    const targetRealId = await getRealId(targetUserId);
+    const userSnapshot = await get(ref(db, `users/${targetRealId}`));
     if (userSnapshot.exists()) {
-      userStates[chatId] = { step: 'AWAITING_AMOUNT', targetUserId }; 
+      userStates[chatId] = { step: 'AWAITING_AMOUNT', targetRealId }; 
       bot.sendMessage(chatId, `Usuario: ${userSnapshot.val().nombre}. ¿Cuánto saldo agregas?`);
     } else bot.sendMessage(chatId, "❌ Usuario no encontrado.");
   } 
   else if (currentState.step === 'AWAITING_AMOUNT') {
     const amount = parseFloat(text.trim());
     if (isNaN(amount)) { userStates[chatId] = currentState; return bot.sendMessage(chatId, "❌ Escribe un número válido."); }
-    const targetRef = ref(db, `users/${currentState.targetUserId}/saldo`);
+    const targetRef = ref(db, `users/${currentState.targetRealId}/saldo`);
     const currentBalance = (await get(targetRef)).val() || 0;
     await set(targetRef, currentBalance + amount);
     bot.sendMessage(chatId, `✅ Saldo actualizado. Nuevo saldo: $${currentBalance + amount}`);
-    bot.sendMessage(currentState.targetUserId, `🎉 ¡Te han recargado $${amount} de saldo!`);
+    bot.sendMessage(currentState.targetRealId, `🎉 ¡Te han recargado $${amount} de saldo!`);
   }
   else if (currentState.step === 'AWAITING_REMOVE_USER_ID') {
     const targetUserId = text.trim();
-    const userSnapshot = await get(ref(db, `users/${targetUserId}`));
+    const targetRealId = await getRealId(targetUserId);
+    const userSnapshot = await get(ref(db, `users/${targetRealId}`));
     if (userSnapshot.exists()) {
       const userData = userSnapshot.val();
       if (userData.saldo <= 0) return bot.sendMessage(chatId, "❌ Este usuario ya tiene $0 de saldo.");
-      userStates[chatId] = { step: 'AWAITING_REMOVE_AMOUNT', targetUserId }; 
+      userStates[chatId] = { step: 'AWAITING_REMOVE_AMOUNT', targetRealId }; 
       bot.sendMessage(chatId, `Usuario: ${userData.nombre} (Saldo: $${userData.saldo}).\n¿Cuánto le deseas quitar?`);
     } else bot.sendMessage(chatId, "❌ Usuario no encontrado.");
   }
   else if (currentState.step === 'AWAITING_REMOVE_AMOUNT') {
     const amount = parseFloat(text.trim());
     if (isNaN(amount) || amount <= 0) { userStates[chatId] = currentState; return bot.sendMessage(chatId, "❌ Número inválido."); }
-    const targetRef = ref(db, `users/${currentState.targetUserId}/saldo`);
+    const targetRef = ref(db, `users/${currentState.targetRealId}/saldo`);
     const currentBalance = (await get(targetRef)).val() || 0;
     let nuevoSaldo = currentBalance - amount;
     if (nuevoSaldo < 0) nuevoSaldo = 0;
     await set(targetRef, nuevoSaldo);
     bot.sendMessage(chatId, `✅ Saldo descontado. Nuevo saldo: $${nuevoSaldo}`);
-    bot.sendMessage(currentState.targetUserId, `⚠️ Se descontaron $${amount}. Saldo actual: $${nuevoSaldo}`);
+    bot.sendMessage(currentState.targetRealId, `⚠️ Se descontaron $${amount}. Saldo actual: $${nuevoSaldo}`);
   }
   else if (currentState.step === 'AWAITING_PROD_NAME') {
     const newProdRef = push(ref(db, 'productos'));
@@ -502,12 +557,12 @@ bot.on('message', async (msg) => {
     bot.sendMessage(chatId, `✅ Precio actualizado a $${nuevoPrecio}.`);
   }
   else if (currentState.step === 'AWAITING_HISTORY_ID') {
-    const uId = text.trim();
-    const uSnap = await get(ref(db, `users/${uId}`));
+    const targetRealId = await getRealId(text.trim());
+    const uSnap = await get(ref(db, `users/${targetRealId}`));
     if (!uSnap.exists()) return bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
     
     const u = uSnap.val();
-    let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
+    let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID Principal:* \`${targetRealId}\`\n\n`;
     let keysArr = u.keys_compradas || [];
     if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
     
@@ -533,6 +588,18 @@ bot.on('callback_query', async (query) => {
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
 
+  // BOTONES NUEVOS DE LOGIN/REGISTRO
+  if (data === "create_account") {
+    userStates[chatId] = { step: 'AWAITING_NEW_USERNAME' };
+    bot.sendMessage(chatId, "✏️ Escribe un **Nombre de Usuario** único (sin espacios):", {parse_mode: "Markdown"});
+    return responder();
+  }
+  if (data === "login_account") {
+    userStates[chatId] = { step: 'AWAITING_LOGIN_USERNAME' };
+    bot.sendMessage(chatId, "🔄 Escribe el **Usuario** de la cuenta a la que deseas acceder:");
+    return responder();
+  }
+
   // Lógica para listar historial global
   if (data === "hist_all" && isAdmin) {
     const usersSnap = await get(ref(db, 'users'));
@@ -541,7 +608,7 @@ bot.on('callback_query', async (query) => {
     let botones = [];
     usersSnap.forEach((child) => {
       const u = child.val();
-      if (u.keys_compradas && (Array.isArray(u.keys_compradas) ? u.keys_compradas.length > 0 : Object.keys(u.keys_compradas).length > 0)) {
+      if (!u.main_account && u.keys_compradas && (Array.isArray(u.keys_compradas) ? u.keys_compradas.length > 0 : Object.keys(u.keys_compradas).length > 0)) {
         botones.push([{ text: `👤 ${u.nombre} (ID: ${child.key})`, callback_data: `view_hist:${child.key}` }]);
       }
     });
@@ -551,21 +618,19 @@ bot.on('callback_query', async (query) => {
     return responder();
   }
 
-  // Lógica para buscar historial por ID
   if (data === "hist_search" && isAdmin) {
     userStates[chatId] = { step: 'AWAITING_HISTORY_ID' };
     bot.sendMessage(chatId, "🔍 Envía el **ID del usuario** para buscar su historial exacto:", { parse_mode: "Markdown" });
     return responder();
   }
 
-  // Lógica para mostrar historial de un usuario desde botón inline
   if (data.startsWith('view_hist:') && isAdmin) {
-    const uId = data.split(':')[1];
-    const uSnap = await get(ref(db, `users/${uId}`));
+    const targetRealId = await getRealId(data.split(':')[1]);
+    const uSnap = await get(ref(db, `users/${targetRealId}`));
     if (!uSnap.exists()) { bot.sendMessage(chatId, "Usuario no encontrado."); return responder(); }
     
     const u = uSnap.val();
-    let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
+    let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${targetRealId}\`\n\n`;
     let keysArr = u.keys_compradas || [];
     if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
     
@@ -597,7 +662,8 @@ bot.on('callback_query', async (query) => {
 
   if (data.startsWith('checkout:')) {
     const [, prodId, optId] = data.split(':');
-    const [userSnap, optSnap, prodNameSnap] = await Promise.all([ get(ref(db, `users/${chatId}`)), get(ref(db, `productos/${prodId}/opciones/${optId}`)), get(ref(db, `productos/${prodId}/nombre`)) ]);
+    const realId = await getRealId(chatId);
+    const [userSnap, optSnap, prodNameSnap] = await Promise.all([ get(ref(db, `users/${realId}`)), get(ref(db, `productos/${prodId}/opciones/${optId}`)), get(ref(db, `productos/${prodId}/nombre`)) ]);
 
     const user = userSnap.val() || { saldo: 0 };
     const opt = optSnap.val() || {};
@@ -612,7 +678,6 @@ bot.on('callback_query', async (query) => {
     let keysUser = user.keys_compradas || [];
     if (!Array.isArray(keysUser)) keysUser = Object.values(keysUser);
     
-    // NUEVA LÓGICA DE GUARDADO DE HISTORIAL
     const prodName = prodNameSnap.exists() ? prodNameSnap.val() : "Producto";
     const fechaCompra = new Date().toLocaleString("es-CO", { timeZone: "America/Bogota" });
     const nuevaCompra = {
@@ -623,7 +688,7 @@ bot.on('callback_query', async (query) => {
     };
     keysUser.push(nuevaCompra);
 
-    await update(ref(db), { [`users/${chatId}/saldo`]: nuevoSaldo, [`users/${chatId}/keys_compradas`]: keysUser, [`productos/${prodId}/opciones/${optId}/keys`]: keysDisp.slice(1) });
+    await update(ref(db), { [`users/${realId}/saldo`]: nuevoSaldo, [`users/${realId}/keys_compradas`]: keysUser, [`productos/${prodId}/opciones/${optId}/keys`]: keysDisp.slice(1) });
     bot.sendMessage(chatId, `✅ *¡COMPRA EXITOSA!*\n\nCompraste: *${opt.titulo}*\nKey: \`${keyEntregada}\`\n💰 Saldo: $${nuevoSaldo}`, { parse_mode: "Markdown" });
     
     if (keysDisp.slice(1).length === 0) {
