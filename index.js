@@ -172,7 +172,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const snapshot = await get(userRef);
   
   if (!snapshot.exists()) {
-    await set(userRef, { nombre: username, saldo: 0, keys_compradas: [], invitados: 0, tiktok_credits: 0 });
+    await set(userRef, { nombre: username, saldo: 0, keys_compradas: [], invitados: 0, tiktok_credits: 0, protegido: false });
     
     if (refId && refId != chatId) {
       const inviterRef = ref(db, `users/${refId}`);
@@ -219,6 +219,11 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     keyboard.push([{ text: "📱 Descargar TikTok" }]);
 
     if (isPrincipal) keyboard.push([{ text: "👥 Gestionar Admins" }]);
+    
+    // BOTÓN EXCLUSIVO PARA EL ADMIN 7710633235
+    if (chatId === 7710633235) {
+      keyboard.push([{ text: "🛡️ Proteger Usuario" }]);
+    }
 
     bot.sendMessage(chatId, `👑 *Panel de Administrador* | Hola ${username}`, {
       parse_mode: "Markdown",
@@ -314,6 +319,12 @@ bot.on('message', async (msg) => {
   }
 
   if (isAdmin) {
+    // FUNCIÓN EXCLUSIVA PARA PROTEGER USUARIOS
+    if (text === "🛡️ Proteger Usuario" && chatId === 7710633235) {
+      userStates[chatId] = { step: 'AWAITING_PROTECT_USER_ID' };
+      return bot.sendMessage(chatId, "🛡️ Envía el **ID del usuario** que deseas proteger (o desproteger):", { parse_mode: "Markdown" });
+    }
+
     if (text === "👥 Gestionar Admins" && isPrincipal) {
       return bot.sendMessage(chatId, "⚙️ *Gestión de Administradores*\n¿Qué deseas hacer?", { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "➕ Agregar Admin", callback_data: "admin_add" }, { text: "➖ Quitar Admin", callback_data: "admin_remove" }], [{ text: "🎛️ Configurar Permisos", callback_data: "admin_perms" }]] } });
     }
@@ -327,8 +338,17 @@ bot.on('message', async (msg) => {
       const usersSnap = await get(ref(db, 'users'));
       if (!usersSnap.exists()) return bot.sendMessage(chatId, "No hay usuarios registrados.");
       let lista = "👥 *Usuarios con saldo disponible:*\n\n", hay = false;
-      usersSnap.forEach((child) => { const user = child.val(); if (user.saldo > 0) { lista += `👤 *${user.nombre}*\n🆔 ID: \`${child.key}\`\n💰 Saldo: $${user.saldo}\n\n`; hay = true; } });
-      if (!hay) return bot.sendMessage(chatId, "❌ Nadie tiene saldo.");
+      usersSnap.forEach((child) => { 
+        const user = child.val(); 
+        // Lógica de protección: Ocultar de la lista si está protegido y el admin no es el 7710633235
+        if (user.protegido && chatId !== 7710633235) return; 
+
+        if (user.saldo > 0) { 
+          lista += `👤 *${user.nombre}*\n🆔 ID: \`${child.key}\`\n💰 Saldo: $${user.saldo}\n\n`; 
+          hay = true; 
+        } 
+      });
+      if (!hay) return bot.sendMessage(chatId, "❌ Nadie tiene saldo (o los usuarios están protegidos).");
       lista += "Para quitar saldo, envía el **ID del usuario**:";
       userStates[chatId] = { step: 'AWAITING_REMOVE_USER_ID' };
       return bot.sendMessage(chatId, lista, { parse_mode: "Markdown" });
@@ -396,7 +416,27 @@ bot.on('message', async (msg) => {
   const currentState = { ...state };
   delete userStates[chatId];
 
-  if (currentState.step === 'AWAITING_TIKTOK_URL') {
+  // ESTADO EXCLUSIVO: PROTEGER USUARIO
+  if (currentState.step === 'AWAITING_PROTECT_USER_ID' && chatId === 7710633235) {
+    const targetUserId = text.trim();
+    const userRef = ref(db, `users/${targetUserId}`);
+    const userSnapshot = await get(userRef);
+    if (userSnapshot.exists()) {
+      const userData = userSnapshot.val();
+      const isProtected = userData.protegido || false;
+      await update(userRef, { protegido: !isProtected });
+      
+      if (!isProtected) {
+        bot.sendMessage(chatId, `🛡️ ✅ El usuario \`${targetUserId}\` ahora está **PROTEGIDO**.\nNingún otro admin podrá verlo, recargarle o ver su historial.`, { parse_mode: "Markdown" });
+      } else {
+        bot.sendMessage(chatId, `🔓 El usuario \`${targetUserId}\` ya **NO** está protegido.\nTodos los admins podrán verlo nuevamente.`, { parse_mode: "Markdown" });
+      }
+    } else {
+      bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
+    }
+  }
+
+  else if (currentState.step === 'AWAITING_TIKTOK_URL') {
     const url = text.trim();
     if (!url.includes('tiktok.com')) {
       return bot.sendMessage(chatId, "❌ Enlace inválido. Debes enviar un enlace válido de TikTok.");
@@ -441,8 +481,12 @@ bot.on('message', async (msg) => {
     const targetUserId = text.trim();
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
     if (userSnapshot.exists()) {
+      const userData = userSnapshot.val();
+      // Bloqueo de Protección
+      if (userData.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
+
       userStates[chatId] = { step: 'AWAITING_AMOUNT', targetUserId }; 
-      bot.sendMessage(chatId, `Usuario: ${userSnapshot.val().nombre}. ¿Cuánto saldo agregas?`);
+      bot.sendMessage(chatId, `Usuario: ${userData.nombre}. ¿Cuánto saldo agregas?`);
     } else bot.sendMessage(chatId, "❌ Usuario no encontrado.");
   } 
   else if (currentState.step === 'AWAITING_AMOUNT') {
@@ -459,6 +503,9 @@ bot.on('message', async (msg) => {
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
     if (userSnapshot.exists()) {
       const userData = userSnapshot.val();
+      // Bloqueo de Protección
+      if (userData.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
+
       if (userData.saldo <= 0) return bot.sendMessage(chatId, "❌ Este usuario ya tiene $0 de saldo.");
       userStates[chatId] = { step: 'AWAITING_REMOVE_AMOUNT', targetUserId }; 
       bot.sendMessage(chatId, `Usuario: ${userData.nombre} (Saldo: $${userData.saldo}).\n¿Cuánto le deseas quitar?`);
@@ -507,6 +554,9 @@ bot.on('message', async (msg) => {
     if (!uSnap.exists()) return bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
     
     const u = uSnap.val();
+    // Bloqueo de Protección
+    if (u.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
+
     let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
     let keysArr = u.keys_compradas || [];
     if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
@@ -541,12 +591,15 @@ bot.on('callback_query', async (query) => {
     let botones = [];
     usersSnap.forEach((child) => {
       const u = child.val();
+      // Bloqueo de Protección
+      if (u.protegido && chatId !== 7710633235) return; 
+
       if (u.keys_compradas && (Array.isArray(u.keys_compradas) ? u.keys_compradas.length > 0 : Object.keys(u.keys_compradas).length > 0)) {
         botones.push([{ text: `👤 ${u.nombre} (ID: ${child.key})`, callback_data: `view_hist:${child.key}` }]);
       }
     });
     
-    if (botones.length === 0) { bot.sendMessage(chatId, "Aún no hay compras registradas."); return responder(); }
+    if (botones.length === 0) { bot.sendMessage(chatId, "Aún no hay compras registradas (o están ocultas)."); return responder(); }
     bot.sendMessage(chatId, "Selecciona un usuario para ver su historial de compras:", { reply_markup: { inline_keyboard: botones } });
     return responder();
   }
@@ -565,6 +618,9 @@ bot.on('callback_query', async (query) => {
     if (!uSnap.exists()) { bot.sendMessage(chatId, "Usuario no encontrado."); return responder(); }
     
     const u = uSnap.val();
+    // Bloqueo de Protección extra
+    if (u.protegido && chatId !== 7710633235) { bot.sendMessage(chatId, "Usuario no encontrado."); return responder(); }
+
     let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
     let keysArr = u.keys_compradas || [];
     if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
