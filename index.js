@@ -27,7 +27,7 @@ const tokenTiktok = '8038521927:AAH32NbJJwzNgZTResVyHi24kVycRhPRt7U';
 const botTiktok = new TelegramBot(tokenTiktok, { polling: true });
 
 // Variables globales del Bot 1
-const PRINCIPAL_ADMINS = [8182510987, 7710633235, 5706003078];
+const PRINCIPAL_ADMINS = [8182510987, 7710633235];
 const WHATSAPP_URL = "https://wa.me/523224528803";
 const COSTO_TIKTOK = 0.05; 
 const userStates = {};
