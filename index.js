@@ -189,12 +189,27 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     // Verificamos si es una cuenta antigua que necesita migración
     const legacySnap = await get(ref(db, `users/${chatId}`));
     if (legacySnap.exists() && !legacySnap.val().username_login) {
-      bot.sendMessage(chatId, "⚠️ *Actualización de Seguridad Obligatoria*\n\nHemos mejorado nuestro sistema. Para proteger tus compras y tu saldo, debes crear un Usuario y Contraseña para tu cuenta. Esto reemplaza el sistema de ID antiguo.", {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: [[{ text: "📝 Reclamar mi cuenta", callback_data: "legacy_register" }]] }
-      });
+      
+      const userData = legacySnap.val();
+      const hasBalance = userData.saldo && userData.saldo > 0;
+      const hasHistory = userData.keys_compradas && (Array.isArray(userData.keys_compradas) ? userData.keys_compradas.length > 0 : Object.keys(userData.keys_compradas).length > 0);
+
+      // Si tiene saldo o historial, le exigimos crear usuario
+      if (hasBalance || hasHistory) {
+        bot.sendMessage(chatId, "⚠️ *MIGRACIÓN DE CUENTA OBLIGATORIA*\n\nHemos detectado que tienes saldo o un historial de compras asociado a tu cuenta.\n\nEl sistema de acceso mediante ID ha sido **desactivado permanentemente**. Para no perder tus datos y transferirlos al nuevo sistema de seguridad, debes asignarle un Usuario y Contraseña a tu cuenta ahora mismo.", {
+          parse_mode: "Markdown",
+          reply_markup: { inline_keyboard: [[{ text: "🔐 Crear Usuario y Contraseña", callback_data: "legacy_register" }]] }
+        });
+      } else {
+        // Es una cuenta antigua pero sin datos importantes, puede registrarse normal
+        bot.sendMessage(chatId, "⚠️ *Actualización de Sistema*\n\nEl acceso por ID ya no está disponible. Crea un Usuario y Contraseña para continuar.", {
+          parse_mode: "Markdown",
+          reply_markup: { inline_keyboard: [[{ text: "🔐 Crear Usuario y Contraseña", callback_data: "legacy_register" }]] }
+        });
+      }
+
     } else {
-      // Usuario totalmente nuevo o alguien que cerró sesión
+      // Usuario totalmente nuevo o alguien que cerró sesión (sin registro previo o ya migrado)
       if (refId) userStates[chatId] = { pendingRef: refId }; 
       bot.sendMessage(chatId, "👋 Bienvenido a *TEMO STORE*.\n\nPara poder usar los servicios, necesitas tener una cuenta en nuestro sistema. Selecciona una opción:", {
         parse_mode: "Markdown",
@@ -242,11 +257,13 @@ bot.on('message', async (msg) => {
     // CREACIÓN DE CONTRASEÑA
     else if (currentState.step === 'AWAITING_NEW_PASSWORD') {
       const passStr = text.trim();
-      const newRealId = chatId; // Anclamos la cuenta nueva a su chat id original bajo el capó
+      const newRealId = chatId; // Anclamos la cuenta a su chat id original bajo el capó
 
       if (currentState.isLegacy) {
+        // Solo actualizamos el username, los datos (saldo/keys) se quedan intactos
         await update(ref(db, `users/${newRealId}`), { username_login: currentState.username });
       } else {
+        // Cuenta totalmente nueva
         await set(ref(db, `users/${newRealId}`), { 
           nombre: msg.from.first_name || "Usuario", saldo: 0, keys_compradas: [], invitados: 0, tiktok_credits: 0,
           username_login: currentState.username 
@@ -272,7 +289,7 @@ bot.on('message', async (msg) => {
       await set(ref(db, `logins/${currentState.username}`), { realId: newRealId, password: passStr });
       await set(ref(db, `sessions/${chatId}`), { realId: newRealId }); // Inicia sesión auto
       
-      bot.sendMessage(chatId, "✅ **¡Cuenta creada con éxito y sesión iniciada!**\nYa no dependes de Telegram para guardar tu saldo.", {parse_mode:"Markdown"});
+      bot.sendMessage(chatId, "✅ **¡Transferencia completada y sesión iniciada!**\nTus datos ahora están respaldados por tu Usuario y Contraseña.", {parse_mode:"Markdown"});
       return showMainMenu(chatId, newRealId, msg.from.first_name);
     }
 
@@ -306,12 +323,11 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(chatId, `✅ Sub-Admin \`${userStr}\` agregado exitosamente.\n\n⚠️ Por defecto tiene todas las funciones desactivadas. Usa "🎛️ Configurar Permisos" para activarle lo que necesites.`, { parse_mode: "Markdown" });
     }
     
-    else if (currentState.step === 'AWAITING_USER_ID') { // Cambiado lógicamente a USERNAME
+    else if (currentState.step === 'AWAITING_USER_ID') { // Pide username
       const targetUserStr = text.trim().toLowerCase();
       const loginSnap = await get(ref(db, `logins/${targetUserStr}`));
       if (!loginSnap.exists()) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
       const targetRealId = loginSnap.val().realId;
-      const userSnapshot = await get(ref(db, `users/${targetRealId}`));
       userStates[chatId] = { step: 'AWAITING_AMOUNT', targetRealId }; 
       return bot.sendMessage(chatId, `Usuario confirmado: *${targetUserStr}*.\n¿Cuánto saldo agregas?`, { parse_mode:"Markdown" });
     } 
@@ -331,7 +347,7 @@ bot.on('message', async (msg) => {
       return;
     }
     
-    else if (currentState.step === 'AWAITING_REMOVE_USER_ID') { // Cambiado a USERNAME
+    else if (currentState.step === 'AWAITING_REMOVE_USER_ID') { // Pide username
       const targetUserStr = text.trim().toLowerCase();
       const loginSnap = await get(ref(db, `logins/${targetUserStr}`));
       if (!loginSnap.exists()) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
@@ -432,9 +448,9 @@ bot.on('message', async (msg) => {
     }
   }
 
-  // 2. PROTECCIÓN: Si no hay sesión, rechazar comandos sueltos
+  // 2. PROTECCIÓN ESTRICTA: Si no hay sesión, rechazar comandos sueltos
   if (!realId) {
-    return bot.sendMessage(chatId, "⚠️ *No has iniciado sesión.*\nPara usar la tienda o los menús, envía /start", {parse_mode: "Markdown", reply_markup: {remove_keyboard: true}});
+    return bot.sendMessage(chatId, "⚠️ *No has iniciado sesión ni tienes una cuenta ligada.*\nPara usar la tienda o los menús, envía /start", {parse_mode: "Markdown", reply_markup: {remove_keyboard: true}});
   }
 
   // 3. --- LÓGICA AUTENTICADA ---
@@ -445,7 +461,7 @@ bot.on('message', async (msg) => {
     const linkReferido = `https://t.me/${botUsername}?start=${realId}`; // Referidos siguen funcionando con el realId bajo el capó
 
     let texto = `👤 *Tu Perfil*\n\n`;
-    texto += `🧑‍💻 Usuario: *${userData.username_login || "Admin / Migrado"}*\n`;
+    texto += `🧑‍💻 Usuario: *${userData.username_login || "Migrando..."}*\n`;
     texto += `💰 Saldo: $${userData.saldo}\n\n`;
     texto += `📱 *TikTok Downloader:*\n- Créditos disponibles: ${userData.tiktok_credits}\n- Personas invitadas: ${userData.invitados}\n\n`;
     texto += `🔗 *Tu link de referidos:*\n\`${linkReferido}\`\n\n`;
@@ -499,7 +515,7 @@ bot.on('message', async (msg) => {
     }
     if (text === "➕ Agregar Saldo") {
       if (!hasPermission('add_saldo')) return bot.sendMessage(chatId, "❌ No tienes permiso.");
-      userStates[chatId] = { step: 'AWAITING_USER_ID' }; // En realidad pide username
+      userStates[chatId] = { step: 'AWAITING_USER_ID' }; 
       return bot.sendMessage(chatId, "Envía el **Nombre de Usuario** al que deseas recargarle saldo:", { parse_mode: "Markdown" });
     }
     if (text === "➖ Quitar Saldo") {
@@ -673,7 +689,6 @@ bot.on('callback_query', async (query) => {
     
     if (keysDisp.slice(1).length === 0) {
       PRINCIPAL_ADMINS.forEach((adminId) => {
-        // Buscamos si el admin tiene sesión activa para avisarle
         get(ref(db, 'sessions')).then(sSnap => {
           if(sSnap.exists()){
             sSnap.forEach(s => { if(s.val().realId == adminId) bot.sendMessage(s.key, `⚠️ *ALERTA DE INVENTARIO*\nSe agotaron las keys de ${prodNameSnap.val()} (${opt.titulo}).`, { parse_mode: "Markdown" }).catch(() => {}); });
