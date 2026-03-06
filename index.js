@@ -37,7 +37,7 @@ bot.getMe().then(info => botUsername = info.username);
 
 // --- FUNCIONES COMPARTIDAS ---
 
-// Obtiene el ID maestro si la cuenta está vinculada
+// NUEVA FUNCIÓN: Obtiene el ID maestro si la cuenta está vinculada
 async function getRealId(chatId) {
   const snap = await get(ref(db, `users/${chatId}/main_account`));
   return snap.exists() ? snap.val() : chatId;
@@ -205,8 +205,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     if (hasPermission('view_history')) row4.push({ text: "📜 Historial Compras" });
     if (row4.length > 0) keyboard.push(row4);
 
-    // Añadimos el perfil al menú de admin
-    keyboard.push([{ text: "📱 Descargar TikTok" }, { text: "👤 Mi Perfil" }]);
+    keyboard.push([{ text: "👤 Mi Perfil" }, { text: "📱 Descargar TikTok" }]);
 
     if (isPrincipal) keyboard.push([{ text: "👥 Gestionar Admins" }]);
 
@@ -228,9 +227,9 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     });
   }
 
-  // MENSAJE AUTOMÁTICO PARA TODOS que no tengan credenciales
+  // MENSAJE AUTOMÁTICO PARA TODOS (Admins y Usuarios) que no tengan credenciales
   const userDataStart = (await get(userRef)).val();
-  if (userDataStart && !userDataStart.username_login && !userDataStart.main_account) {
+  if (userDataStart && !userDataStart.username_login && !userDataStart.main_account && chatId.toString() === realId.toString()) {
      bot.sendMessage(chatId, "⚠️ *Aviso Importante:* Aún no has creado un Usuario y Contraseña.\n\nVe a **👤 Mi Perfil** y créalos. Esto te permitirá acceder a tu cuenta, saldo e historial desde cualquier otro Telegram en el futuro sin perder tus datos.", {parse_mode: "Markdown"});
   }
 });
@@ -249,9 +248,16 @@ bot.on('message', async (msg) => {
     const userData = (await get(ref(db, `users/${realId}`))).val() || { saldo: 0, invitados: 0, tiktok_credits: 0 };
     const linkReferido = `https://t.me/${botUsername}?start=${realId}`;
 
-    let texto = `👤 *Tu Perfil*\n\n💰 Saldo: $${userData.saldo}\n🆔 Tu ID Principal: \`${realId}\`\n`;
+    let texto = `👤 *Tu Perfil*\n\n💰 Saldo: $${userData.saldo}\n`;
+    
+    // Si están en una cuenta vinculada, mostramos información clara
     if (chatId.toString() !== realId.toString()) {
-      texto += `🔗 _Sesión vinculada desde ID local: ${chatId}_\n`;
+      texto += `🔗 _Conectado a la cuenta principal: ${userData.username_login || "Usuario" }_\n`;
+    } else {
+      texto += `🆔 Tu ID Principal: \`${realId}\`\n`;
+      if (userData.username_login) {
+        texto += `🧑‍💻 Tu Usuario: *${userData.username_login}*\n`;
+      }
     }
     
     texto += `\n📱 *TikTok Downloader:*\n- Créditos disponibles: ${userData.tiktok_credits}\n- Personas invitadas: ${userData.invitados}\n\n`;
@@ -273,14 +279,16 @@ bot.on('message', async (msg) => {
       texto += "Aún no tienes keys.";
     }
     
+    // Botones dinámicos según el estado de la sesión
     let inlineBtns = [];
-    if (!userData.username_login && !userData.main_account) {
-      inlineBtns.push([{ text: "🔐 Crear Cuenta (Usuario/Contraseña)", callback_data: "create_account" }]);
-    }
-    inlineBtns.push([{ text: "🔄 Acceder desde otra cuenta", callback_data: "login_account" }]);
-
-    // Si están en una cuenta vinculada, mostramos el botón de cerrar sesión
-    if (chatId.toString() !== realId.toString()) {
+    if (chatId.toString() === realId.toString()) {
+      // Está en su cuenta original
+      if (!userData.username_login) {
+        inlineBtns.push([{ text: "🔐 Crear Cuenta (Usuario/Contraseña)", callback_data: "create_account" }]);
+      }
+      inlineBtns.push([{ text: "🔄 Acceder desde otra cuenta", callback_data: "login_account" }]);
+    } else {
+      // Está en una cuenta vinculada (Logueado desde otra parte)
       inlineBtns.push([{ text: "🚪 Cerrar Sesión", callback_data: "logout_account" }]);
     }
 
@@ -447,7 +455,7 @@ bot.on('message', async (msg) => {
         return bot.sendMessage(chatId, "⚠️ Esta ya es tu cuenta principal, no necesitas vincularla de nuevo.");
       }
       await set(ref(db, `users/${chatId}/main_account`), currentState.realId);
-      bot.sendMessage(chatId, "✅ **¡Sesión Iniciada Correctamente!**\n\nEsta cuenta de Telegram ahora está vinculada a tu cuenta principal. Todas tus compras y saldo están 100% sincronizados. 🎉", {parse_mode:"Markdown"});
+      bot.sendMessage(chatId, "✅ **¡Sesión Iniciada Correctamente!**\n\nEsta cuenta de Telegram ahora está vinculada a tu cuenta principal. Todas tus compras y saldo están 100% sincronizados. 🎉\n\n_Escribe /start para actualizar el menú._", {parse_mode:"Markdown"});
     } else {
       bot.sendMessage(chatId, "❌ Contraseña incorrecta. Operación cancelada.");
     }
@@ -593,7 +601,7 @@ bot.on('callback_query', async (query) => {
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
 
-  // BOTONES DE LOGIN, REGISTRO Y CERRAR SESIÓN
+  // BOTONES NUEVOS DE LOGIN/REGISTRO
   if (data === "create_account") {
     userStates[chatId] = { step: 'AWAITING_NEW_USERNAME' };
     bot.sendMessage(chatId, "✏️ Escribe un **Nombre de Usuario** único (sin espacios):", {parse_mode: "Markdown"});
@@ -606,11 +614,7 @@ bot.on('callback_query', async (query) => {
   }
   if (data === "logout_account") {
     await remove(ref(db, `users/${chatId}/main_account`));
-    bot.editMessageText("🚪 **Sesión Cerrada exitosamente.**\nHas vuelto a tu cuenta original de este Telegram. Escribe /start para recargar el menú.", {
-      chat_id: chatId,
-      message_id: query.message.message_id,
-      parse_mode: "Markdown"
-    });
+    bot.sendMessage(chatId, "🚪 **Sesión cerrada exitosamente.**\nHas vuelto a tu cuenta original de Telegram.\n\n_Escribe /start para actualizar el menú._", {parse_mode: "Markdown"});
     return responder();
   }
 
