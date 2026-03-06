@@ -212,6 +212,10 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     if (hasPermission('edit_price')) row3.push({ text: "✏️ Editar Precios" });
     if (row3.length > 0) keyboard.push(row3);
 
+    const row4 = [];
+    if (hasPermission('view_history')) row4.push({ text: "📜 Historial Compras" });
+    if (row4.length > 0) keyboard.push(row4);
+
     keyboard.push([{ text: "📱 Descargar TikTok" }]);
 
     if (isPrincipal) keyboard.push([{ text: "👥 Gestionar Admins" }]);
@@ -257,8 +261,17 @@ bot.on('message', async (msg) => {
     let keysArr = userData.keys_compradas || [];
     if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
 
-    if (keysArr.length > 0) keysArr.forEach(k => texto += `- \`${k}\`\n`);
-    else texto += "Aún no tienes keys.";
+    if (keysArr.length > 0) {
+      keysArr.forEach(k => {
+        if (typeof k === 'object') {
+          texto += `- \`${k.key}\` (Gastaste: $${k.gasto})\n`;
+        } else {
+          texto += `- \`${k}\`\n`; // Para compatibilidad con keys antiguas
+        }
+      });
+    } else {
+      texto += "Aún no tienes keys.";
+    }
     
     return bot.sendMessage(chatId, texto, { parse_mode: "Markdown", disable_web_page_preview: true });
   }
@@ -363,6 +376,18 @@ bot.on('message', async (msg) => {
       });
       return bot.sendMessage(chatId, "Selecciona el producto:", { reply_markup: { inline_keyboard: botones } });
     }
+    if (text === "📜 Historial Compras") {
+      if (!hasPermission('view_history')) return bot.sendMessage(chatId, "❌ No tienes permiso.");
+      return bot.sendMessage(chatId, "📜 *Gestión de Historial de Compras*\nElige una opción:", {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "👥 Ver lista de compradores", callback_data: "hist_all" }],
+            [{ text: "🔍 Buscar historial por ID", callback_data: "hist_search" }]
+          ]
+        }
+      });
+    }
   }
 
   // --- LÓGICA DE ESTADOS ---
@@ -409,7 +434,7 @@ bot.on('message', async (msg) => {
 
   else if (currentState.step === 'AWAITING_NEW_ADMIN_ID' && isPrincipal) {
     const newAdminId = text.trim();
-    await set(ref(db, `sub_admins/${newAdminId}`), { agregado_por: chatId, permisos: { add_saldo: false, remove_saldo: false, create_prod: false, manage_prod: false, view_stock: false, edit_price: false } });
+    await set(ref(db, `sub_admins/${newAdminId}`), { agregado_por: chatId, permisos: { add_saldo: false, remove_saldo: false, create_prod: false, manage_prod: false, view_stock: false, edit_price: false, view_history: false } });
     bot.sendMessage(chatId, `✅ Sub-Admin \`${newAdminId}\` agregado exitosamente.\n\n⚠️ *Nota:* Por defecto tiene todas las funciones desactivadas. Usa "🎛️ Configurar Permisos" para activarle lo que necesites.`, { parse_mode: "Markdown" });
   }
   else if (currentState.step === 'AWAITING_USER_ID') {
@@ -476,6 +501,29 @@ bot.on('message', async (msg) => {
     await update(ref(db), { [`productos/${currentState.prodId}/opciones/${currentState.optId}/precio`]: nuevoPrecio });
     bot.sendMessage(chatId, `✅ Precio actualizado a $${nuevoPrecio}.`);
   }
+  else if (currentState.step === 'AWAITING_HISTORY_ID') {
+    const uId = text.trim();
+    const uSnap = await get(ref(db, `users/${uId}`));
+    if (!uSnap.exists()) return bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
+    
+    const u = uSnap.val();
+    let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
+    let keysArr = u.keys_compradas || [];
+    if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+    
+    if (keysArr.length === 0) {
+      textoHistorial += "Este usuario no ha realizado ninguna compra.";
+    } else {
+      keysArr.forEach(k => {
+        if (typeof k === 'object') {
+          textoHistorial += `🔹 *Producto:* ${k.producto}\n🔑 *Key:* \`${k.key}\`\n💸 *Gasto:* $${k.gasto}\n📅 *Fecha:* ${k.fecha}\n\n`;
+        } else {
+          textoHistorial += `🔹 *Key (Antigua):* \`${k}\`\n\n`;
+        }
+      });
+    }
+    bot.sendMessage(chatId, textoHistorial, { parse_mode: "Markdown" });
+  }
 });
 
 // --- 5. MANEJO DE BOTONES EN LÍNEA ---
@@ -484,6 +532,57 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
+
+  // Lógica para listar historial global
+  if (data === "hist_all" && isAdmin) {
+    const usersSnap = await get(ref(db, 'users'));
+    if (!usersSnap.exists()) { bot.sendMessage(chatId, "No hay usuarios registrados."); return responder(); }
+    
+    let botones = [];
+    usersSnap.forEach((child) => {
+      const u = child.val();
+      if (u.keys_compradas && (Array.isArray(u.keys_compradas) ? u.keys_compradas.length > 0 : Object.keys(u.keys_compradas).length > 0)) {
+        botones.push([{ text: `👤 ${u.nombre} (ID: ${child.key})`, callback_data: `view_hist:${child.key}` }]);
+      }
+    });
+    
+    if (botones.length === 0) { bot.sendMessage(chatId, "Aún no hay compras registradas."); return responder(); }
+    bot.sendMessage(chatId, "Selecciona un usuario para ver su historial de compras:", { reply_markup: { inline_keyboard: botones } });
+    return responder();
+  }
+
+  // Lógica para buscar historial por ID
+  if (data === "hist_search" && isAdmin) {
+    userStates[chatId] = { step: 'AWAITING_HISTORY_ID' };
+    bot.sendMessage(chatId, "🔍 Envía el **ID del usuario** para buscar su historial exacto:", { parse_mode: "Markdown" });
+    return responder();
+  }
+
+  // Lógica para mostrar historial de un usuario desde botón inline
+  if (data.startsWith('view_hist:') && isAdmin) {
+    const uId = data.split(':')[1];
+    const uSnap = await get(ref(db, `users/${uId}`));
+    if (!uSnap.exists()) { bot.sendMessage(chatId, "Usuario no encontrado."); return responder(); }
+    
+    const u = uSnap.val();
+    let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
+    let keysArr = u.keys_compradas || [];
+    if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+    
+    if (keysArr.length === 0) {
+      textoHistorial += "Este usuario no tiene compras.";
+    } else {
+      keysArr.forEach(k => {
+        if (typeof k === 'object') {
+          textoHistorial += `🔹 *Producto:* ${k.producto}\n🔑 *Key:* \`${k.key}\`\n💸 *Gasto:* $${k.gasto}\n📅 *Fecha:* ${k.fecha}\n\n`;
+        } else {
+          textoHistorial += `🔹 *Key (Antigua):* \`${k}\`\n\n`;
+        }
+      });
+    }
+    bot.sendMessage(chatId, textoHistorial, { parse_mode: "Markdown" });
+    return responder();
+  }
 
   if (data.startsWith('buy_prod:')) {
     const prodId = data.split(':')[1];
@@ -512,13 +611,23 @@ bot.on('callback_query', async (query) => {
     const nuevoSaldo = user.saldo - opt.precio; 
     let keysUser = user.keys_compradas || [];
     if (!Array.isArray(keysUser)) keysUser = Object.values(keysUser);
-    keysUser.push(keyEntregada);
+    
+    // NUEVA LÓGICA DE GUARDADO DE HISTORIAL
+    const prodName = prodNameSnap.exists() ? prodNameSnap.val() : "Producto";
+    const fechaCompra = new Date().toLocaleString("es-CO", { timeZone: "America/Bogota" });
+    const nuevaCompra = {
+      key: keyEntregada,
+      producto: `${prodName} (${opt.titulo})`,
+      gasto: opt.precio,
+      fecha: fechaCompra
+    };
+    keysUser.push(nuevaCompra);
 
     await update(ref(db), { [`users/${chatId}/saldo`]: nuevoSaldo, [`users/${chatId}/keys_compradas`]: keysUser, [`productos/${prodId}/opciones/${optId}/keys`]: keysDisp.slice(1) });
     bot.sendMessage(chatId, `✅ *¡COMPRA EXITOSA!*\n\nCompraste: *${opt.titulo}*\nKey: \`${keyEntregada}\`\n💰 Saldo: $${nuevoSaldo}`, { parse_mode: "Markdown" });
     
     if (keysDisp.slice(1).length === 0) {
-      PRINCIPAL_ADMINS.forEach((adminId) => bot.sendMessage(adminId, `⚠️ *ALERTA DE INVENTARIO*\nSe agotaron las keys de ${prodNameSnap.val()} (${opt.titulo}).`, { parse_mode: "Markdown" }).catch(() => {}));
+      PRINCIPAL_ADMINS.forEach((adminId) => bot.sendMessage(adminId, `⚠️ *ALERTA DE INVENTARIO*\nSe agotaron las keys de ${prodName} (${opt.titulo}).`, { parse_mode: "Markdown" }).catch(() => {}));
     }
     return responder();
   }
@@ -556,6 +665,7 @@ bot.on('callback_query', async (query) => {
             btn('Agregar Saldo', 'add_saldo'), btn('Quitar Saldo', 'remove_saldo'),
             btn('Crear Prod.', 'create_prod'), btn('Gestionar Prod.', 'manage_prod'),
             btn('Ver Stocks', 'view_stock'), btn('Editar Precios', 'edit_price'),
+            btn('Ver Historial', 'view_history'),
             [{ text: "🔙 Volver a la lista", callback_data: "admin_perms" }]
           ]
         }
