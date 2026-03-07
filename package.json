@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Bot de tienda automatica para Telegram",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
@@ -13,8 +12,5 @@
     "firebase-admin": "^13.6.0",
     "node-telegram-bot-api": "^0.67.0",
     "pino": "^10.3.0"
-  },
-  "keywords": [],
-  "author": "Temo Store",
-  "license": "ISC"
+  }
 }
