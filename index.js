@@ -52,7 +52,7 @@ async function checkAdminPermissions(chatId) {
   return { isPrincipal, isSubAdmin, isAdmin, hasPermission };
 }
 
-// NUEVO: Función para verificar si un usuario está baneado
+// Función para verificar si un usuario está baneado
 async function isBanned(chatId) {
   const banSnap = await get(ref(db, `banned_users/${chatId}`));
   return banSnap.exists();
@@ -102,7 +102,6 @@ async function getAndTrackTiktokUsers(chatId) {
 botTiktok.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   
-  // NUEVO: Bloqueo si está baneado
   if (await isBanned(chatId)) return botTiktok.sendMessage(chatId, "🚫 Estás baneado y no puedes usar este bot.");
 
   const totalUsuarios = await getAndTrackTiktokUsers(chatId);
@@ -132,7 +131,6 @@ botTiktok.on('message', async (msg) => {
 
   if (!text || text.startsWith('/')) return;
   
-  // NUEVO: Bloqueo si está baneado
   if (await isBanned(chatId)) return;
 
   const totalUsuarios = await getAndTrackTiktokUsers(chatId);
@@ -166,7 +164,6 @@ botTiktok.on('message', async (msg) => {
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   
-  // NUEVO: Bloqueo si está baneado
   if (await isBanned(chatId)) return bot.sendMessage(chatId, "🚫 Tu ID ha sido bloqueado en el sistema.");
 
   const username = msg.from.first_name || "Usuario";
@@ -218,7 +215,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
     const row4 = [];
     if (hasPermission('view_history')) row4.push({ text: "📜 Historial Compras" });
-    if (hasPermission('ban_user')) row4.push({ text: "🚫 Banear ID" }); // NUEVO BOTÓN
+    if (hasPermission('ban_user')) row4.push({ text: "🚫 Banear / Desbanear" }); // ACTUALIZADO
     if (row4.length > 0) keyboard.push(row4);
 
     keyboard.push([{ text: "📱 Descargar TikTok" }]);
@@ -254,7 +251,6 @@ bot.on('message', async (msg) => {
 
   if (!text || text.startsWith('/')) return;
 
-  // NUEVO: Bloqueo si está baneado (para usuarios normales)
   if (await isBanned(chatId)) return;
 
   const { isAdmin, isPrincipal, hasPermission } = await checkAdminPermissions(chatId);
@@ -330,11 +326,19 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(chatId, "🛡️ Envía el **ID del usuario** que deseas proteger (o desproteger):", { parse_mode: "Markdown" });
     }
 
-    // NUEVO: Comando para Banear
-    if (text === "🚫 Banear ID") {
-      if (!hasPermission('ban_user')) return bot.sendMessage(chatId, "❌ No tienes permiso para banear.");
-      userStates[chatId] = { step: 'AWAITING_BAN_ID' };
-      return bot.sendMessage(chatId, "🚫 Envía el **ID del usuario** que deseas banear del bot:", { parse_mode: "Markdown" });
+    // NUEVO: Menú para Banear / Desbanear
+    if (text === "🚫 Banear / Desbanear") {
+      if (!hasPermission('ban_user')) return bot.sendMessage(chatId, "❌ No tienes permiso para esta función.");
+      
+      return bot.sendMessage(chatId, "🚫 *Gestión de Baneos*\n¿Qué deseas hacer?", {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🔨 Banear Usuario", callback_data: "action_ban" }],
+            [{ text: "✅ Desbanear Usuario", callback_data: "action_unban" }]
+          ]
+        }
+      });
     }
 
     if (text === "👥 Gestionar Admins" && isPrincipal) {
@@ -427,7 +431,7 @@ bot.on('message', async (msg) => {
   const currentState = { ...state };
   delete userStates[chatId];
 
-  // NUEVO: Estado para procesar baneo
+  // Estado para procesar baneo
   if (currentState.step === 'AWAITING_BAN_ID' && isAdmin) {
     const targetId = text.trim();
     if (PRINCIPAL_ADMINS.includes(parseInt(targetId))) return bot.sendMessage(chatId, "❌ No puedes banear a un Admin Principal.");
@@ -498,7 +502,6 @@ bot.on('message', async (msg) => {
 
   else if (currentState.step === 'AWAITING_NEW_ADMIN_ID' && isPrincipal) {
     const newAdminId = text.trim();
-    // NUEVO: Agregado permiso 'ban_user' por defecto como false
     await set(ref(db, `sub_admins/${newAdminId}`), { agregado_por: chatId, permisos: { add_saldo: false, remove_saldo: false, create_prod: false, manage_prod: false, view_stock: false, edit_price: false, view_history: false, ban_user: false } });
     bot.sendMessage(chatId, `✅ Sub-Admin \`${newAdminId}\` agregado exitosamente.\n\n⚠️ *Nota:* Por defecto tiene todas las funciones desactivadas. Usa "🎛️ Configurar Permisos" para activarle lo que necesites.`, { parse_mode: "Markdown" });
   }
@@ -604,6 +607,46 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
+
+  // NUEVO: Opciones de Banear y Desbanear
+  if (isAdmin) {
+    if (data === "action_ban") {
+      userStates[chatId] = { step: 'AWAITING_BAN_ID' };
+      bot.sendMessage(chatId, "🚫 Envía el **ID del usuario** que deseas banear del bot:", { parse_mode: "Markdown" });
+      return responder();
+    }
+
+    if (data === "action_unban") {
+      const bansSnap = await get(ref(db, 'banned_users'));
+      if (!bansSnap.exists()) {
+        bot.sendMessage(chatId, "✅ No hay usuarios baneados actualmente en la base de datos.");
+        return responder();
+      }
+
+      const botones = [];
+      bansSnap.forEach((child) => {
+        botones.push([{ text: `🔓 Desbanear ID: ${child.key}`, callback_data: `unban_user:${child.key}` }]);
+      });
+
+      bot.sendMessage(chatId, "🛡️ *Usuarios Baneados:*\nSelecciona el usuario que deseas desbanear:", { 
+        parse_mode: "Markdown", 
+        reply_markup: { inline_keyboard: botones } 
+      });
+      return responder();
+    }
+
+    if (data.startsWith('unban_user:')) {
+      const targetId = data.split(':')[1];
+      await remove(ref(db, `banned_users/${targetId}`));
+      bot.editMessageText(`✅ El ID \`${targetId}\` ha sido desbaneado exitosamente.`, { 
+        chat_id: chatId, 
+        message_id: query.message.message_id, 
+        parse_mode: "Markdown" 
+      });
+      bot.sendMessage(targetId, "✅ Has sido desbaneado del bot. ¡Bienvenido de nuevo!").catch(()=>{});
+      return responder();
+    }
+  }
 
   if (data === "hist_all" && isAdmin) {
     const usersSnap = await get(ref(db, 'users'));
@@ -738,7 +781,7 @@ bot.on('callback_query', async (query) => {
             btn('Crear Prod.', 'create_prod'), btn('Gestionar Prod.', 'manage_prod'),
             btn('Ver Stocks', 'view_stock'), btn('Editar Precios', 'edit_price'),
             btn('Ver Historial', 'view_history'),
-            btn('Banear Usuarios', 'ban_user'), // NUEVO PERMISO EN INTERFAZ
+            btn('Banear Usuarios', 'ban_user'), 
             [{ text: "🔙 Volver a la lista", callback_data: "admin_perms" }]
           ]
         }
