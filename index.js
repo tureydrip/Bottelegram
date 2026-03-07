@@ -2,7 +2,11 @@ import TelegramBot from 'node-telegram-bot-api';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, get, set, update, push, remove } from 'firebase/database';
 
+// ==========================================
 // --- 1. CONFIGURACIÓN DE FIREBASE ---
+// ==========================================
+
+// -> FIREBASE 1: TEMO STORE & TIKTOK
 const firebaseConfig = {
   apiKey: "AIzaSyBCk_6-UQu_8js-Rof_Vps7QWPBw6dJFcg",
   authDomain: "temo-store.firebaseapp.com",
@@ -12,21 +16,39 @@ const firebaseConfig = {
   messagingSenderId: "502364316401",
   appId: "1:502364316401:web:201b9e9c6e426acdb33f50"
 };
-
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// --- 2. CONFIGURACIÓN DE LOS BOTS ---
+// -> FIREBASE 2: LUCK XIT (VIP)
+const firebaseConfigVip = {
+    apiKey: "AIzaSyDrNambFw1VNXSkTR1yGq6_B9jWWA1LsxM",
+    authDomain: "clientesvip-be9bd.firebaseapp.com",
+    projectId: "clientesvip-be9bd",
+    storageBucket: "clientesvip-be9bd.firebasestorage.app",
+    messagingSenderId: "131036295027",
+    appId: "1:131036295027:web:3cc360dca16d4873f55f06"
+};
+// Se le asigna un nombre ("AppVIP") para que no choque con la app principal
+const appVip = initializeApp(firebaseConfigVip, "AppVIP"); 
+const dbVip = getDatabase(appVip);
 
-// BOT 1: TEMO STORE (Bot Original)
+// ==========================================
+// --- 2. CONFIGURACIÓN DE LOS BOTS ---
+// ==========================================
+
+// BOT 1: TEMO STORE
 const token = '8240591970:AAEAPtTNdanUdR0tXZDjFC9hcdxsdmQFuGI'; 
 const bot = new TelegramBot(token, { polling: true });
 
-// BOT 2: TIKTOK GRATIS (Bot Nuevo)
+// BOT 2: TIKTOK GRATIS
 const tokenTiktok = '8038521927:AAH32NbJJwzNgZTResVyHi24kVycRhPRt7U';
 const botTiktok = new TelegramBot(tokenTiktok, { polling: true });
 
-// Variables globales del Bot 1
+// BOT 3: LUCK XIT VIP
+const tokenLuckXit = '8275295427:AAFc-U21od7ZWdtQU-62U1mJOSJqFYFZ-IQ';
+const botLuckXit = new TelegramBot(tokenLuckXit, { polling: true });
+
+// --- Variables globales del Bot 1 ---
 const PRINCIPAL_ADMINS = [8182510987, 7710633235];
 const WHATSAPP_URL = "https://wa.me/523224528803";
 const COSTO_TIKTOK = 0.05; 
@@ -35,7 +57,10 @@ const userStates = {};
 let botUsername = "";
 bot.getMe().then(info => botUsername = info.username);
 
-// --- FUNCIONES COMPARTIDAS ---
+
+// ==========================================
+// --- FUNCIONES COMPARTIDAS (BOTS 1 Y 2) ---
+// ==========================================
 
 async function checkAdminPermissions(chatId) {
   const isPrincipal = PRINCIPAL_ADMINS.includes(chatId);
@@ -73,7 +98,6 @@ async function getTikTokVideo(url) {
   }
 }
 
-// --- NUEVA FUNCIÓN PARA CONTAR USUARIOS DEL BOT 2 ---
 async function getAndTrackTiktokUsers(chatId) {
   const userRef = ref(db, `tiktok_bot_users/${chatId}`);
   const userSnap = await get(userRef);
@@ -85,7 +109,6 @@ async function getAndTrackTiktokUsers(chatId) {
     totalUsers = statsSnap.val();
   }
 
-  // Si el usuario no existe en la base de datos del bot 2, lo registramos y sumamos 1
   if (!userSnap.exists()) {
     totalUsers += 1;
     await set(userRef, true);
@@ -94,15 +117,13 @@ async function getAndTrackTiktokUsers(chatId) {
   return totalUsers;
 }
 
+
 // ==========================================
 // ====== LÓGICA DEL BOT 2 (TIKTOK GRATIS) ==
 // ==========================================
 
-// Se cambió a async para poder consultar la base de datos
 botTiktok.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  
-  // Obtenemos el total de usuarios (y registramos al actual si es nuevo)
   const totalUsuarios = await getAndTrackTiktokUsers(chatId);
   
   const mensaje = "🤖 *Este bot está 100% programado por sebastian (LUCK XIT OFC)*\n\n" +
@@ -128,10 +149,8 @@ botTiktok.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Ignorar si no hay texto o si es un comando (como /start)
   if (!text || text.startsWith('/')) return;
 
-  // Actualizamos estadísticas por si el usuario envió un enlace sin usar /start antes
   const totalUsuarios = await getAndTrackTiktokUsers(chatId);
 
   if (text.includes('tiktok.com')) {
@@ -140,7 +159,6 @@ botTiktok.on('message', async (msg) => {
 
     if (videoUrl) {
       try {
-        // Se agregó el contador también aquí para que lo vean al descargar
         await botTiktok.sendVideo(chatId, videoUrl, { caption: `✅ ¡Aquí tienes tu video gratis!\n\n📊 *Usuarios totales en tiempo real:* ${totalUsuarios}\n🤖 _Bot by: sebastian (LUCK XIT OFC)_`, parse_mode: "Markdown" });
         botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
       } catch (error) {
@@ -152,7 +170,6 @@ botTiktok.on('message', async (msg) => {
       botTiktok.sendMessage(chatId, "❌ Error al procesar el enlace. Asegúrate de que el video sea público y el enlace esté correcto.");
     }
   } else {
-    // Si envían texto que no es de tiktok
     botTiktok.sendMessage(chatId, "⚠️ Por favor, envíame un enlace válido de TikTok.");
   }
 });
@@ -162,7 +179,6 @@ botTiktok.on('message', async (msg) => {
 // ====== LÓGICA DEL BOT 1 (TEMO STORE) =====
 // ==========================================
 
-// --- 3. COMANDO /START ---
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const username = msg.from.first_name || "Usuario";
@@ -220,7 +236,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
     if (isPrincipal) keyboard.push([{ text: "👥 Gestionar Admins" }]);
     
-    // BOTÓN EXCLUSIVO PARA EL ADMIN 7710633235
     if (chatId === 7710633235) {
       keyboard.push([{ text: "🛡️ Proteger Usuario" }]);
     }
@@ -244,12 +259,10 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   }
 });
 
-// --- 4. MANEJO DE TEXTOS DEL TECLADO Y ESTADOS ---
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Si es un mensaje del bot 2 o un comando, lo ignoramos para no mezclar eventos
   if (!text || text.startsWith('/')) return;
 
   const { isAdmin, isPrincipal, hasPermission } = await checkAdminPermissions(chatId);
@@ -271,7 +284,7 @@ bot.on('message', async (msg) => {
         if (typeof k === 'object') {
           texto += `- \`${k.key}\` (Gastaste: $${k.gasto})\n`;
         } else {
-          texto += `- \`${k}\`\n`; // Para compatibilidad con keys antiguas
+          texto += `- \`${k}\`\n`; 
         }
       });
     } else {
@@ -319,7 +332,6 @@ bot.on('message', async (msg) => {
   }
 
   if (isAdmin) {
-    // FUNCIÓN EXCLUSIVA PARA PROTEGER USUARIOS
     if (text === "🛡️ Proteger Usuario" && chatId === 7710633235) {
       userStates[chatId] = { step: 'AWAITING_PROTECT_USER_ID' };
       return bot.sendMessage(chatId, "🛡️ Envía el **ID del usuario** que deseas proteger (o desproteger):", { parse_mode: "Markdown" });
@@ -340,7 +352,6 @@ bot.on('message', async (msg) => {
       let lista = "👥 *Usuarios con saldo disponible:*\n\n", hay = false;
       usersSnap.forEach((child) => { 
         const user = child.val(); 
-        // Lógica de protección: Ocultar de la lista si está protegido y el admin no es el 7710633235
         if (user.protegido && chatId !== 7710633235) return; 
 
         if (user.saldo > 0) { 
@@ -410,13 +421,11 @@ bot.on('message', async (msg) => {
     }
   }
 
-  // --- LÓGICA DE ESTADOS ---
   const state = userStates[chatId];
   if (!state) return;
   const currentState = { ...state };
   delete userStates[chatId];
 
-  // ESTADO EXCLUSIVO: PROTEGER USUARIO
   if (currentState.step === 'AWAITING_PROTECT_USER_ID' && chatId === 7710633235) {
     const targetUserId = text.trim();
     const userRef = ref(db, `users/${targetUserId}`);
@@ -482,7 +491,6 @@ bot.on('message', async (msg) => {
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
     if (userSnapshot.exists()) {
       const userData = userSnapshot.val();
-      // Bloqueo de Protección
       if (userData.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
 
       userStates[chatId] = { step: 'AWAITING_AMOUNT', targetUserId }; 
@@ -503,7 +511,6 @@ bot.on('message', async (msg) => {
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
     if (userSnapshot.exists()) {
       const userData = userSnapshot.val();
-      // Bloqueo de Protección
       if (userData.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
 
       if (userData.saldo <= 0) return bot.sendMessage(chatId, "❌ Este usuario ya tiene $0 de saldo.");
@@ -554,7 +561,6 @@ bot.on('message', async (msg) => {
     if (!uSnap.exists()) return bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
     
     const u = uSnap.val();
-    // Bloqueo de Protección
     if (u.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
 
     let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
@@ -576,14 +582,12 @@ bot.on('message', async (msg) => {
   }
 });
 
-// --- 5. MANEJO DE BOTONES EN LÍNEA ---
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
 
-  // Lógica para listar historial global
   if (data === "hist_all" && isAdmin) {
     const usersSnap = await get(ref(db, 'users'));
     if (!usersSnap.exists()) { bot.sendMessage(chatId, "No hay usuarios registrados."); return responder(); }
@@ -591,7 +595,6 @@ bot.on('callback_query', async (query) => {
     let botones = [];
     usersSnap.forEach((child) => {
       const u = child.val();
-      // Bloqueo de Protección
       if (u.protegido && chatId !== 7710633235) return; 
 
       if (u.keys_compradas && (Array.isArray(u.keys_compradas) ? u.keys_compradas.length > 0 : Object.keys(u.keys_compradas).length > 0)) {
@@ -604,21 +607,18 @@ bot.on('callback_query', async (query) => {
     return responder();
   }
 
-  // Lógica para buscar historial por ID
   if (data === "hist_search" && isAdmin) {
     userStates[chatId] = { step: 'AWAITING_HISTORY_ID' };
     bot.sendMessage(chatId, "🔍 Envía el **ID del usuario** para buscar su historial exacto:", { parse_mode: "Markdown" });
     return responder();
   }
 
-  // Lógica para mostrar historial de un usuario desde botón inline
   if (data.startsWith('view_hist:') && isAdmin) {
     const uId = data.split(':')[1];
     const uSnap = await get(ref(db, `users/${uId}`));
     if (!uSnap.exists()) { bot.sendMessage(chatId, "Usuario no encontrado."); return responder(); }
     
     const u = uSnap.val();
-    // Bloqueo de Protección extra
     if (u.protegido && chatId !== 7710633235) { bot.sendMessage(chatId, "Usuario no encontrado."); return responder(); }
 
     let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
@@ -668,7 +668,6 @@ bot.on('callback_query', async (query) => {
     let keysUser = user.keys_compradas || [];
     if (!Array.isArray(keysUser)) keysUser = Object.values(keysUser);
     
-    // NUEVA LÓGICA DE GUARDADO DE HISTORIAL
     const prodName = prodNameSnap.exists() ? prodNameSnap.val() : "Producto";
     const fechaCompra = new Date().toLocaleString("es-CO", { timeZone: "America/Bogota" });
     const nuevaCompra = {
@@ -790,5 +789,279 @@ bot.on('callback_query', async (query) => {
   responder();
 });
 
+
+// ==========================================
+// ====== LÓGICA DEL BOT 3 (LUCK XIT VIP) ===
+// ==========================================
+// NOTA: Toda esta sección está totalmente encapsulada, usa dbVip, botLuckXit, userStatesLuckXit, etc.
+
+const ADMIN_ID_LUCKXIT = 7710633235; 
+const userStatesLuckXit = {}; 
+
+const userKeyboardLuckXit = {
+    reply_markup: {
+        keyboard: [
+            [{ text: '🛒 Tienda' }, { text: '👤 Mi Perfil' }],
+            [{ text: '💳 Recargas' }]
+        ],
+        resize_keyboard: true,
+        is_persistent: true
+    }
+};
+
+const adminKeyboardLuckXit = {
+    reply_markup: {
+        keyboard: [
+            [{ text: '🛒 Tienda' }, { text: '👤 Mi Perfil' }],
+            [{ text: '💳 Recargas' }],
+            [{ text: '📦 Crear Producto' }, { text: '🔑 Añadir Stock' }],
+            [{ text: '💰 Añadir Saldo' }, { text: '❌ Cancelar Acción' }]
+        ],
+        resize_keyboard: true,
+        is_persistent: true
+    }
+};
+
+async function getAuthUser(telegramId) {
+    const authSnap = await get(ref(dbVip, `telegram_auth/${telegramId}`));
+    if (authSnap.exists()) return authSnap.val();
+    return null;
+}
+
+botLuckXit.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id;
+    const tgId = msg.from.id;
+    userStatesLuckXit[chatId] = null; 
+
+    const webUid = await getAuthUser(tgId);
+
+    if (!webUid) {
+        const textoBloqueo = `🛑 *ACCESO DENEGADO*\n\nTu dispositivo no está vinculado a una cuenta web.\n\n🔑 *TU ID DE TELEGRAM ES:* \`${tgId}\`\n\nVe a la web, vincula tu cuenta y vuelve a escribir /start.`;
+        return botLuckXit.sendMessage(chatId, textoBloqueo, { parse_mode: 'Markdown' });
+    }
+
+    const userSnap = await get(ref(dbVip, `users/${webUid}`));
+    const webUser = userSnap.val();
+    const keyboard = (tgId === ADMIN_ID_LUCKXIT) ? adminKeyboardLuckXit : userKeyboardLuckXit;
+    const greeting = (tgId === ADMIN_ID_LUCKXIT) ? `👑 ¡Bienvenido Admin Supremo, *${webUser.username}*!` : `🌌 Bienvenido a LUCK XIT, *${webUser.username}*.`;
+
+    botLuckXit.sendMessage(chatId, `${greeting}\nUsa los botones de abajo para navegar.`, { parse_mode: 'Markdown', ...keyboard });
+});
+
+botLuckXit.on('message', async (msg) => {
+    if (!msg.text || msg.text === '/start') return;
+
+    const chatId = msg.chat.id;
+    const tgId = msg.from.id;
+    const text = msg.text;
+
+    const webUid = await getAuthUser(tgId);
+    if (!webUid) return botLuckXit.sendMessage(chatId, `🛑 Acceso denegado. Escribe /start para verificar.`);
+
+    if (text === '❌ Cancelar Acción') {
+        userStatesLuckXit[chatId] = null;
+        return botLuckXit.sendMessage(chatId, '✅ Acción cancelada. ¿Qué deseas hacer ahora?', adminKeyboardLuckXit);
+    }
+
+    if (userStatesLuckXit[chatId]) {
+        const state = userStatesLuckXit[chatId];
+
+        if (state.step === 'ADD_BALANCE_USER') {
+            state.data.targetUser = text.trim();
+            state.step = 'ADD_BALANCE_AMOUNT';
+            return botLuckXit.sendMessage(chatId, `Dime la **cantidad** en USD a añadir para ${state.data.targetUser}:`, { parse_mode: 'Markdown' });
+        }
+        if (state.step === 'ADD_BALANCE_AMOUNT') {
+            const amount = parseFloat(text);
+            if (isNaN(amount)) return botLuckXit.sendMessage(chatId, '❌ Cantidad inválida. Intenta con un número (ej: 5.50).');
+            
+            botLuckXit.sendMessage(chatId, '⚙️ Buscando usuario...');
+            const usersSnap = await get(ref(dbVip, 'users'));
+            let foundUid = null; let currentBal = 0;
+
+            usersSnap.forEach(child => {
+                if (child.val().username === state.data.targetUser) { 
+                    foundUid = child.key; 
+                    currentBal = parseFloat(child.val().balance || 0); 
+                }
+            });
+
+            if (foundUid) {
+                const updates = {};
+                updates[`users/${foundUid}/balance`] = currentBal + amount;
+                const rechRef = push(ref(dbVip, `users/${foundUid}/recharges`));
+                updates[`users/${foundUid}/recharges/${rechRef.key}`] = { amount: amount, date: Date.now() };
+                
+                await update(ref(dbVip), updates);
+                botLuckXit.sendMessage(chatId, `✅ Saldo añadido a ${state.data.targetUser}. Nuevo saldo: $${(currentBal + amount).toFixed(2)}`, adminKeyboardLuckXit);
+                
+                const authData = await get(ref(dbVip, 'telegram_auth'));
+                let targetTgId = null;
+                if (authData.exists()) {
+                    authData.forEach(child => {
+                        if (child.val() === foundUid) targetTgId = child.key;
+                    });
+                }
+                if (targetTgId) {
+                    botLuckXit.sendMessage(targetTgId, `💰 *¡NUEVO SALDO DISPONIBLE!*\nEl administrador te ha añadido *$${amount.toFixed(2)} USD* a tu cuenta.\n\nNuevo saldo total: *$${(currentBal + amount).toFixed(2)} USD*`, { parse_mode: 'Markdown' });
+                }
+
+            } else {
+                botLuckXit.sendMessage(chatId, `❌ Usuario no encontrado.`, adminKeyboardLuckXit);
+            }
+            userStatesLuckXit[chatId] = null;
+            return;
+        }
+
+        if (state.step === 'CREATE_PROD_NAME') {
+            state.data.name = text;
+            state.step = 'CREATE_PROD_PRICE';
+            return botLuckXit.sendMessage(chatId, 'Ingresa el **precio** en USD (ej: 2.5):', { parse_mode: 'Markdown' });
+        }
+        if (state.step === 'CREATE_PROD_PRICE') {
+            const price = parseFloat(text);
+            if (isNaN(price)) return botLuckXit.sendMessage(chatId, '❌ Precio inválido. Usa números.');
+            state.data.price = price;
+            state.step = 'CREATE_PROD_DURATION';
+            return botLuckXit.sendMessage(chatId, 'Ingresa la **duración** (ej: 24 horas):', { parse_mode: 'Markdown' });
+        }
+        if (state.step === 'CREATE_PROD_DURATION') {
+            const newProdRef = push(ref(dbVip, 'products'));
+            await set(newProdRef, { name: state.data.name, price: state.data.price, duration: text });
+            botLuckXit.sendMessage(chatId, `✅ Producto *${state.data.name}* creado exitosamente.`, { parse_mode: 'Markdown', ...adminKeyboardLuckXit });
+            userStatesLuckXit[chatId] = null;
+            return;
+        }
+
+        if (state.step === 'ADD_STOCK_KEYS') {
+            const keysRaw = text;
+            const cleanKeys = keysRaw.split(/[\n,\s]+/).map(k => k.trim()).filter(k => k.length > 0);
+            
+            if (cleanKeys.length === 0) {
+                userStatesLuckXit[chatId] = null;
+                return botLuckXit.sendMessage(chatId, '❌ No se detectaron keys válidas. Operación cancelada.');
+            }
+
+            const updates = {};
+            cleanKeys.forEach(k => {
+                const newId = push(ref(dbVip, `products/${state.data.prodId}/keys`)).key;
+                updates[`products/${state.data.prodId}/keys/${newId}`] = k;
+            });
+
+            await update(ref(dbVip), updates);
+            botLuckXit.sendMessage(chatId, `✅ ¡Listo! Se agregaron ${cleanKeys.length} keys al producto.`, adminKeyboardLuckXit);
+            userStatesLuckXit[chatId] = null;
+            return;
+        }
+    }
+
+    if (text === '👤 Mi Perfil') {
+        const userSnap = await get(ref(dbVip, `users/${webUid}`));
+        const user = userSnap.val();
+        return botLuckXit.sendMessage(chatId, `👤 *PERFIL LUCK XIT*\n\nUsuario: ${user.username}\n💰 Saldo: *$${parseFloat(user.balance).toFixed(2)} USD*`, { parse_mode: 'Markdown' });
+    }
+
+    if (text === '💳 Recargas') {
+        const rechargeInline = { inline_keyboard: [[{ text: '💬 Enviar Comprobante a WhatsApp', url: 'https://wa.me/573142369516' }]] };
+        return botLuckXit.sendMessage(chatId, `💳 *RECARGAS*\n\n1. Envía a Nequi: 3214701288\n2. Toca el botón de abajo para reportarlo.`, { parse_mode: 'Markdown', reply_markup: rechargeInline });
+    }
+
+    if (text === '🛒 Tienda') {
+        const productsSnap = await get(ref(dbVip, 'products'));
+        if (!productsSnap.exists()) return botLuckXit.sendMessage(chatId, 'Tienda vacía en este momento.');
+        
+        let inlineKeyboard = [];
+        productsSnap.forEach(child => {
+            const p = child.val();
+            const stock = p.keys ? Object.keys(p.keys).length : 0;
+            if (stock > 0) {
+                inlineKeyboard.push([{ text: `Comprar ${p.name} - $${p.price} (${stock} disp)`, callback_data: `buy_${child.key}` }]);
+            }
+        });
+        if(inlineKeyboard.length === 0) return botLuckXit.sendMessage(chatId, '❌ Todos los productos están agotados.');
+        
+        return botLuckXit.sendMessage(chatId, `🛒 *ARSENAL DISPONIBLE*\nSelecciona un producto:`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: inlineKeyboard } });
+    }
+
+    if (tgId === ADMIN_ID_LUCKXIT) {
+        if (text === '💰 Añadir Saldo') {
+            userStatesLuckXit[chatId] = { step: 'ADD_BALANCE_USER', data: {} };
+            return botLuckXit.sendMessage(chatId, 'Escribe el **Nombre de Usuario** exacto al que deseas añadir saldo:', { parse_mode: 'Markdown' });
+        }
+        
+        if (text === '📦 Crear Producto') {
+            userStatesLuckXit[chatId] = { step: 'CREATE_PROD_NAME', data: {} };
+            return botLuckXit.sendMessage(chatId, 'Escribe el **Nombre** del nuevo producto:', { parse_mode: 'Markdown' });
+        }
+
+        if (text === '🔑 Añadir Stock') {
+            const productsSnap = await get(ref(dbVip, 'products'));
+            if (!productsSnap.exists()) return botLuckXit.sendMessage(chatId, '❌ No hay productos creados.');
+            
+            let inlineKeyboard = [];
+            productsSnap.forEach(child => {
+                inlineKeyboard.push([{ text: `➕ Stock a: ${child.val().name}`, callback_data: `stock_${child.key}` }]);
+            });
+            return botLuckXit.sendMessage(chatId, `📦 Selecciona a qué producto vas a agregarle Keys:`, { reply_markup: { inline_keyboard: inlineKeyboard } });
+        }
+    }
+});
+
+botLuckXit.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const tgId = query.from.id;
+    const data = query.data;
+    botLuckXit.answerCallbackQuery(query.id);
+
+    const webUid = await getAuthUser(tgId);
+    if (!webUid) return botLuckXit.sendMessage(chatId, `🛑 Acceso revocado.`);
+
+    if (data.startsWith('stock_') && tgId === ADMIN_ID_LUCKXIT) {
+        const prodId = data.split('_')[1];
+        userStatesLuckXit[chatId] = { step: 'ADD_STOCK_KEYS', data: { prodId: prodId } };
+        return botLuckXit.sendMessage(chatId, 'Pega todas las **Keys** ahora. Puedes separarlas por espacios, comas o saltos de línea:', { parse_mode: 'Markdown' });
+    }
+
+    if (data.startsWith('buy_')) {
+        const productId = data.split('_')[1];
+        botLuckXit.sendMessage(chatId, '⚙️ Procesando transacción...');
+
+        const userSnap = await get(ref(dbVip, `users/${webUid}`));
+        const prodSnap = await get(ref(dbVip, `products/${productId}`));
+        
+        let currentBalance = parseFloat(userSnap.val().balance || 0);
+        let product = prodSnap.val();
+
+        if (currentBalance < product.price) return botLuckXit.sendMessage(chatId, '❌ Saldo insuficiente en la Web.');
+        
+        if (product.keys && Object.keys(product.keys).length > 0) {
+            const firstKeyId = Object.keys(product.keys)[0];
+            const keyToDeliver = product.keys[firstKeyId];
+            
+            const stockRestante = Object.keys(product.keys).length - 1;
+
+            const updates = {};
+            updates[`products/${productId}/keys/${firstKeyId}`] = null; 
+            updates[`users/${webUid}/balance`] = currentBalance - product.price; 
+            
+            const historyRef = push(ref(dbVip, `users/${webUid}/history`));
+            updates[`users/${webUid}/history/${historyRef.key}`] = { product: product.name, key: keyToDeliver, price: product.price, date: Date.now() };
+
+            await update(ref(dbVip), updates);
+            botLuckXit.sendMessage(chatId, `✅ *¡COMPRA EXITOSA!*\n\nTu Key es:\n\n\`${keyToDeliver}\``, { parse_mode: 'Markdown' });
+
+            if (stockRestante === 0) {
+                botLuckXit.sendMessage(ADMIN_ID_LUCKXIT, `⚠️ *¡ALERTA DE INVENTARIO!*\n\nEl producto *${product.name}* se acaba de quedar en **0 Keys**.\n\nPor favor entra al menú y usa "🔑 Añadir Stock".`, { parse_mode: 'Markdown' });
+            }
+
+        } else {
+            botLuckXit.sendMessage(chatId, '❌ Producto agotado justo ahora.');
+        }
+    }
+});
+
+
+// --- INICIO DE CONSOLA ---
 console.log("Bot TEMO STORE iniciado...");
 console.log("Bot TIKTOK GRATIS iniciado...");
+console.log("🤖 Bot LUCK XIT sincronizado e interactivo iniciado...");
