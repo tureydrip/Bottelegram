@@ -18,15 +18,12 @@ const db = getDatabase(app);
 
 // --- 2. CONFIGURACIÓN DE LOS BOTS ---
 
-// BOT 1: TEMO STORE (Bot Original)
 const token = '8240591970:AAEAPtTNdanUdR0tXZDjFC9hcdxsdmQFuGI'; 
 const bot = new TelegramBot(token, { polling: true });
 
-// BOT 2: TIKTOK GRATIS (Bot Nuevo)
 const tokenTiktok = '8038521927:AAH32NbJJwzNgZTResVyHi24kVycRhPRt7U';
 const botTiktok = new TelegramBot(tokenTiktok, { polling: true });
 
-// Variables globales del Bot 1
 const PRINCIPAL_ADMINS = [8182510987, 7710633235];
 const WHATSAPP_URL = "https://wa.me/523224528803";
 const COSTO_TIKTOK = 0.05; 
@@ -55,6 +52,12 @@ async function checkAdminPermissions(chatId) {
   return { isPrincipal, isSubAdmin, isAdmin, hasPermission };
 }
 
+// NUEVO: Función para verificar si un usuario está baneado
+async function isBanned(chatId) {
+  const banSnap = await get(ref(db, `banned_users/${chatId}`));
+  return banSnap.exists();
+}
+
 async function getTikTokVideo(url) {
   try {
     const response = await fetch("https://www.tikwm.com/api/", {
@@ -73,7 +76,6 @@ async function getTikTokVideo(url) {
   }
 }
 
-// --- NUEVA FUNCIÓN PARA CONTAR USUARIOS DEL BOT 2 ---
 async function getAndTrackTiktokUsers(chatId) {
   const userRef = ref(db, `tiktok_bot_users/${chatId}`);
   const userSnap = await get(userRef);
@@ -85,7 +87,6 @@ async function getAndTrackTiktokUsers(chatId) {
     totalUsers = statsSnap.val();
   }
 
-  // Si el usuario no existe en la base de datos del bot 2, lo registramos y sumamos 1
   if (!userSnap.exists()) {
     totalUsers += 1;
     await set(userRef, true);
@@ -98,11 +99,12 @@ async function getAndTrackTiktokUsers(chatId) {
 // ====== LÓGICA DEL BOT 2 (TIKTOK GRATIS) ==
 // ==========================================
 
-// Se cambió a async para poder consultar la base de datos
 botTiktok.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   
-  // Obtenemos el total de usuarios (y registramos al actual si es nuevo)
+  // NUEVO: Bloqueo si está baneado
+  if (await isBanned(chatId)) return botTiktok.sendMessage(chatId, "🚫 Estás baneado y no puedes usar este bot.");
+
   const totalUsuarios = await getAndTrackTiktokUsers(chatId);
   
   const mensaje = "🤖 *Este bot está 100% programado por sebastian (LUCK XIT OFC)*\n\n" +
@@ -128,10 +130,11 @@ botTiktok.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Ignorar si no hay texto o si es un comando (como /start)
   if (!text || text.startsWith('/')) return;
+  
+  // NUEVO: Bloqueo si está baneado
+  if (await isBanned(chatId)) return;
 
-  // Actualizamos estadísticas por si el usuario envió un enlace sin usar /start antes
   const totalUsuarios = await getAndTrackTiktokUsers(chatId);
 
   if (text.includes('tiktok.com')) {
@@ -140,7 +143,6 @@ botTiktok.on('message', async (msg) => {
 
     if (videoUrl) {
       try {
-        // Se agregó el contador también aquí para que lo vean al descargar
         await botTiktok.sendVideo(chatId, videoUrl, { caption: `✅ ¡Aquí tienes tu video gratis!\n\n📊 *Usuarios totales en tiempo real:* ${totalUsuarios}\n🤖 _Bot by: sebastian (LUCK XIT OFC)_`, parse_mode: "Markdown" });
         botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
       } catch (error) {
@@ -152,7 +154,6 @@ botTiktok.on('message', async (msg) => {
       botTiktok.sendMessage(chatId, "❌ Error al procesar el enlace. Asegúrate de que el video sea público y el enlace esté correcto.");
     }
   } else {
-    // Si envían texto que no es de tiktok
     botTiktok.sendMessage(chatId, "⚠️ Por favor, envíame un enlace válido de TikTok.");
   }
 });
@@ -162,9 +163,12 @@ botTiktok.on('message', async (msg) => {
 // ====== LÓGICA DEL BOT 1 (TEMO STORE) =====
 // ==========================================
 
-// --- 3. COMANDO /START ---
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
+  
+  // NUEVO: Bloqueo si está baneado
+  if (await isBanned(chatId)) return bot.sendMessage(chatId, "🚫 Tu ID ha sido bloqueado en el sistema.");
+
   const username = msg.from.first_name || "Usuario";
   const refId = match[1]; 
 
@@ -214,13 +218,13 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
     const row4 = [];
     if (hasPermission('view_history')) row4.push({ text: "📜 Historial Compras" });
+    if (hasPermission('ban_user')) row4.push({ text: "🚫 Banear ID" }); // NUEVO BOTÓN
     if (row4.length > 0) keyboard.push(row4);
 
     keyboard.push([{ text: "📱 Descargar TikTok" }]);
 
     if (isPrincipal) keyboard.push([{ text: "👥 Gestionar Admins" }]);
     
-    // BOTÓN EXCLUSIVO PARA EL ADMIN 7710633235
     if (chatId === 7710633235) {
       keyboard.push([{ text: "🛡️ Proteger Usuario" }]);
     }
@@ -244,16 +248,18 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   }
 });
 
-// --- 4. MANEJO DE TEXTOS DEL TECLADO Y ESTADOS ---
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  // Si es un mensaje del bot 2 o un comando, lo ignoramos para no mezclar eventos
   if (!text || text.startsWith('/')) return;
+
+  // NUEVO: Bloqueo si está baneado (para usuarios normales)
+  if (await isBanned(chatId)) return;
 
   const { isAdmin, isPrincipal, hasPermission } = await checkAdminPermissions(chatId);
 
+  // --- LÓGICA DE TEXTOS COMUNES ---
   if (text === "👤 Mi Perfil") {
     const userData = (await get(ref(db, `users/${chatId}`))).val() || { saldo: 0, invitados: 0, tiktok_credits: 0 };
     const linkReferido = `https://t.me/${botUsername}?start=${chatId}`;
@@ -271,7 +277,7 @@ bot.on('message', async (msg) => {
         if (typeof k === 'object') {
           texto += `- \`${k.key}\` (Gastaste: $${k.gasto})\n`;
         } else {
-          texto += `- \`${k}\`\n`; // Para compatibilidad con keys antiguas
+          texto += `- \`${k}\`\n`;
         }
       });
     } else {
@@ -319,10 +325,16 @@ bot.on('message', async (msg) => {
   }
 
   if (isAdmin) {
-    // FUNCIÓN EXCLUSIVA PARA PROTEGER USUARIOS
     if (text === "🛡️ Proteger Usuario" && chatId === 7710633235) {
       userStates[chatId] = { step: 'AWAITING_PROTECT_USER_ID' };
       return bot.sendMessage(chatId, "🛡️ Envía el **ID del usuario** que deseas proteger (o desproteger):", { parse_mode: "Markdown" });
+    }
+
+    // NUEVO: Comando para Banear
+    if (text === "🚫 Banear ID") {
+      if (!hasPermission('ban_user')) return bot.sendMessage(chatId, "❌ No tienes permiso para banear.");
+      userStates[chatId] = { step: 'AWAITING_BAN_ID' };
+      return bot.sendMessage(chatId, "🚫 Envía el **ID del usuario** que deseas banear del bot:", { parse_mode: "Markdown" });
     }
 
     if (text === "👥 Gestionar Admins" && isPrincipal) {
@@ -340,7 +352,6 @@ bot.on('message', async (msg) => {
       let lista = "👥 *Usuarios con saldo disponible:*\n\n", hay = false;
       usersSnap.forEach((child) => { 
         const user = child.val(); 
-        // Lógica de protección: Ocultar de la lista si está protegido y el admin no es el 7710633235
         if (user.protegido && chatId !== 7710633235) return; 
 
         if (user.saldo > 0) { 
@@ -416,8 +427,21 @@ bot.on('message', async (msg) => {
   const currentState = { ...state };
   delete userStates[chatId];
 
-  // ESTADO EXCLUSIVO: PROTEGER USUARIO
-  if (currentState.step === 'AWAITING_PROTECT_USER_ID' && chatId === 7710633235) {
+  // NUEVO: Estado para procesar baneo
+  if (currentState.step === 'AWAITING_BAN_ID' && isAdmin) {
+    const targetId = text.trim();
+    if (PRINCIPAL_ADMINS.includes(parseInt(targetId))) return bot.sendMessage(chatId, "❌ No puedes banear a un Admin Principal.");
+    
+    const userRef = ref(db, `users/${targetId}`);
+    const uSnap = await get(userRef);
+    if(uSnap.exists() && uSnap.val().protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ No tienes permiso para banear a este usuario protegido.");
+
+    await set(ref(db, `banned_users/${targetId}`), { baneado_por: chatId, fecha: new Date().toLocaleString() });
+    bot.sendMessage(chatId, `✅ El ID \`${targetId}\` ha sido baneado permanentemente.`, { parse_mode: "Markdown" });
+    bot.sendMessage(targetId, "🚫 Has sido baneado del bot.").catch(()=>{});
+  }
+
+  else if (currentState.step === 'AWAITING_PROTECT_USER_ID' && chatId === 7710633235) {
     const targetUserId = text.trim();
     const userRef = ref(db, `users/${targetUserId}`);
     const userSnapshot = await get(userRef);
@@ -474,7 +498,8 @@ bot.on('message', async (msg) => {
 
   else if (currentState.step === 'AWAITING_NEW_ADMIN_ID' && isPrincipal) {
     const newAdminId = text.trim();
-    await set(ref(db, `sub_admins/${newAdminId}`), { agregado_por: chatId, permisos: { add_saldo: false, remove_saldo: false, create_prod: false, manage_prod: false, view_stock: false, edit_price: false, view_history: false } });
+    // NUEVO: Agregado permiso 'ban_user' por defecto como false
+    await set(ref(db, `sub_admins/${newAdminId}`), { agregado_por: chatId, permisos: { add_saldo: false, remove_saldo: false, create_prod: false, manage_prod: false, view_stock: false, edit_price: false, view_history: false, ban_user: false } });
     bot.sendMessage(chatId, `✅ Sub-Admin \`${newAdminId}\` agregado exitosamente.\n\n⚠️ *Nota:* Por defecto tiene todas las funciones desactivadas. Usa "🎛️ Configurar Permisos" para activarle lo que necesites.`, { parse_mode: "Markdown" });
   }
   else if (currentState.step === 'AWAITING_USER_ID') {
@@ -482,7 +507,6 @@ bot.on('message', async (msg) => {
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
     if (userSnapshot.exists()) {
       const userData = userSnapshot.val();
-      // Bloqueo de Protección
       if (userData.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
 
       userStates[chatId] = { step: 'AWAITING_AMOUNT', targetUserId }; 
@@ -503,7 +527,6 @@ bot.on('message', async (msg) => {
     const userSnapshot = await get(ref(db, `users/${targetUserId}`));
     if (userSnapshot.exists()) {
       const userData = userSnapshot.val();
-      // Bloqueo de Protección
       if (userData.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
 
       if (userData.saldo <= 0) return bot.sendMessage(chatId, "❌ Este usuario ya tiene $0 de saldo.");
@@ -554,7 +577,6 @@ bot.on('message', async (msg) => {
     if (!uSnap.exists()) return bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
     
     const u = uSnap.val();
-    // Bloqueo de Protección
     if (u.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ Usuario no encontrado en la base de datos.");
 
     let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
@@ -583,7 +605,6 @@ bot.on('callback_query', async (query) => {
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
 
-  // Lógica para listar historial global
   if (data === "hist_all" && isAdmin) {
     const usersSnap = await get(ref(db, 'users'));
     if (!usersSnap.exists()) { bot.sendMessage(chatId, "No hay usuarios registrados."); return responder(); }
@@ -591,7 +612,6 @@ bot.on('callback_query', async (query) => {
     let botones = [];
     usersSnap.forEach((child) => {
       const u = child.val();
-      // Bloqueo de Protección
       if (u.protegido && chatId !== 7710633235) return; 
 
       if (u.keys_compradas && (Array.isArray(u.keys_compradas) ? u.keys_compradas.length > 0 : Object.keys(u.keys_compradas).length > 0)) {
@@ -604,21 +624,18 @@ bot.on('callback_query', async (query) => {
     return responder();
   }
 
-  // Lógica para buscar historial por ID
   if (data === "hist_search" && isAdmin) {
     userStates[chatId] = { step: 'AWAITING_HISTORY_ID' };
     bot.sendMessage(chatId, "🔍 Envía el **ID del usuario** para buscar su historial exacto:", { parse_mode: "Markdown" });
     return responder();
   }
 
-  // Lógica para mostrar historial de un usuario desde botón inline
   if (data.startsWith('view_hist:') && isAdmin) {
     const uId = data.split(':')[1];
     const uSnap = await get(ref(db, `users/${uId}`));
     if (!uSnap.exists()) { bot.sendMessage(chatId, "Usuario no encontrado."); return responder(); }
     
     const u = uSnap.val();
-    // Bloqueo de Protección extra
     if (u.protegido && chatId !== 7710633235) { bot.sendMessage(chatId, "Usuario no encontrado."); return responder(); }
 
     let textoHistorial = `📜 *Historial de Compras*\n👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n`;
@@ -668,7 +685,6 @@ bot.on('callback_query', async (query) => {
     let keysUser = user.keys_compradas || [];
     if (!Array.isArray(keysUser)) keysUser = Object.values(keysUser);
     
-    // NUEVA LÓGICA DE GUARDADO DE HISTORIAL
     const prodName = prodNameSnap.exists() ? prodNameSnap.val() : "Producto";
     const fechaCompra = new Date().toLocaleString("es-CO", { timeZone: "America/Bogota" });
     const nuevaCompra = {
@@ -722,6 +738,7 @@ bot.on('callback_query', async (query) => {
             btn('Crear Prod.', 'create_prod'), btn('Gestionar Prod.', 'manage_prod'),
             btn('Ver Stocks', 'view_stock'), btn('Editar Precios', 'edit_price'),
             btn('Ver Historial', 'view_history'),
+            btn('Banear Usuarios', 'ban_user'), // NUEVO PERMISO EN INTERFAZ
             [{ text: "🔙 Volver a la lista", callback_data: "admin_perms" }]
           ]
         }
