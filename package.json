@@ -8,11 +8,8 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "express": "^4.19.2",
     "firebase": "^12.10.0",
     "firebase-admin": "^13.6.0",
-    "node-fetch": "^3.3.2",
     "node-telegram-bot-api": "^0.67.0",
     "pino": "^10.3.0"
   }
