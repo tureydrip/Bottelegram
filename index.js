@@ -16,13 +16,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// --- 2. CONFIGURACIÓN DE LOS BOTS ---
-
+// --- 2. CONFIGURACIÓN DEL BOT ---
 const token = '8240591970:AAEAPtTNdanUdR0tXZDjFC9hcdxsdmQFuGI'; 
 const bot = new TelegramBot(token, { polling: true });
-
-const tokenTiktok = '8038521927:AAH32NbJJwzNgZTResVyHi24kVycRhPRt7U';
-const botTiktok = new TelegramBot(tokenTiktok, { polling: true });
 
 const PRINCIPAL_ADMINS = [8182510987, 7710633235];
 const WHATSAPP_URL = "https://wa.me/523224528803";
@@ -32,8 +28,7 @@ const userStates = {};
 let botUsername = "";
 bot.getMe().then(info => botUsername = info.username);
 
-// --- FUNCIONES COMPARTIDAS ---
-
+// --- 3. FUNCIONES GLOBALES ---
 async function checkAdminPermissions(chatId) {
   const isPrincipal = PRINCIPAL_ADMINS.includes(chatId);
   const subAdminsSnap = await get(ref(db, 'sub_admins'));
@@ -52,7 +47,6 @@ async function checkAdminPermissions(chatId) {
   return { isPrincipal, isSubAdmin, isAdmin, hasPermission };
 }
 
-// Función para verificar si un usuario está baneado
 async function isBanned(chatId) {
   const banSnap = await get(ref(db, `banned_users/${chatId}`));
   return banSnap.exists();
@@ -76,91 +70,7 @@ async function getTikTokVideo(url) {
   }
 }
 
-async function getAndTrackTiktokUsers(chatId) {
-  const userRef = ref(db, `tiktok_bot_users/${chatId}`);
-  const userSnap = await get(userRef);
-  const statsRef = ref(db, `tiktok_bot_stats/total_users`);
-  
-  let totalUsers = 0;
-  const statsSnap = await get(statsRef);
-  if (statsSnap.exists()) {
-    totalUsers = statsSnap.val();
-  }
-
-  if (!userSnap.exists()) {
-    totalUsers += 1;
-    await set(userRef, true);
-    await set(statsRef, totalUsers);
-  }
-  return totalUsers;
-}
-
-// ==========================================
-// ====== LÓGICA DEL BOT 2 (TIKTOK GRATIS) ==
-// ==========================================
-
-botTiktok.onText(/\/start/, async (msg) => {
-  const chatId = msg.chat.id;
-  
-  if (await isBanned(chatId)) return botTiktok.sendMessage(chatId, "🚫 Estás baneado y no puedes usar este bot.");
-
-  const totalUsuarios = await getAndTrackTiktokUsers(chatId);
-  
-  const mensaje = "🤖 *Este bot está 100% programado por sebastian (LUCK XIT OFC)*\n\n" +
-                  "👋 ¡Hola! Soy un bot totalmente gratuito para descargar videos de TikTok.\n\n" +
-                  `📊 *Usuarios totales que me usan:* ${totalUsuarios}\n\n` +
-                  "📖 *¿Cómo usar el bot?*\n" +
-                  "Simplemente cópiame y envíame un enlace válido de TikTok (ejemplo: `https://vm.tiktok.com/...`) y yo me encargaré de enviarte el video sin marca de agua al instante. 🚀";
-
-  const opciones = {
-    parse_mode: "Markdown",
-    disable_web_page_preview: true,
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "📞 Contacto en WhatsApp", url: "https://wa.me/573142369516" }]
-      ]
-    }
-  };
-
-  botTiktok.sendMessage(chatId, mensaje, opciones);
-});
-
-botTiktok.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text;
-
-  if (!text || text.startsWith('/')) return;
-  
-  if (await isBanned(chatId)) return;
-
-  const totalUsuarios = await getAndTrackTiktokUsers(chatId);
-
-  if (text.includes('tiktok.com')) {
-    const waitMsg = await botTiktok.sendMessage(chatId, "⏳ Descargando video sin marca de agua, por favor espera...");
-    const videoUrl = await getTikTokVideo(text.trim());
-
-    if (videoUrl) {
-      try {
-        await botTiktok.sendVideo(chatId, videoUrl, { caption: `✅ ¡Aquí tienes tu video gratis!\n\n📊 *Usuarios totales en tiempo real:* ${totalUsuarios}\n🤖 _Bot by: sebastian (LUCK XIT OFC)_`, parse_mode: "Markdown" });
-        botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
-      } catch (error) {
-        botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
-        botTiktok.sendMessage(chatId, "❌ Error al enviar el video. Puede que sea demasiado pesado para Telegram.");
-      }
-    } else {
-      botTiktok.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
-      botTiktok.sendMessage(chatId, "❌ Error al procesar el enlace. Asegúrate de que el video sea público y el enlace esté correcto.");
-    }
-  } else {
-    botTiktok.sendMessage(chatId, "⚠️ Por favor, envíame un enlace válido de TikTok.");
-  }
-});
-
-
-// ==========================================
-// ====== LÓGICA DEL BOT 1 (TEMO STORE) =====
-// ==========================================
-
+// --- 4. LÓGICA PRINCIPAL ---
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   
@@ -215,7 +125,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
     const row4 = [];
     if (hasPermission('view_history')) row4.push({ text: "📜 Historial Compras" });
-    if (hasPermission('ban_user')) row4.push({ text: "🚫 Banear / Desbanear" }); // ACTUALIZADO
+    if (hasPermission('ban_user')) row4.push({ text: "🚫 Banear / Desbanear" }); 
     if (row4.length > 0) keyboard.push(row4);
 
     keyboard.push([{ text: "📱 Descargar TikTok" }]);
@@ -250,12 +160,10 @@ bot.on('message', async (msg) => {
   const text = msg.text;
 
   if (!text || text.startsWith('/')) return;
-
   if (await isBanned(chatId)) return;
 
   const { isAdmin, isPrincipal, hasPermission } = await checkAdminPermissions(chatId);
 
-  // --- LÓGICA DE TEXTOS COMUNES ---
   if (text === "👤 Mi Perfil") {
     const userData = (await get(ref(db, `users/${chatId}`))).val() || { saldo: 0, invitados: 0, tiktok_credits: 0 };
     const linkReferido = `https://t.me/${botUsername}?start=${chatId}`;
@@ -326,7 +234,6 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(chatId, "🛡️ Envía el **ID del usuario** que deseas proteger (o desproteger):", { parse_mode: "Markdown" });
     }
 
-    // NUEVO: Menú para Banear / Desbanear
     if (text === "🚫 Banear / Desbanear") {
       if (!hasPermission('ban_user')) return bot.sendMessage(chatId, "❌ No tienes permiso para esta función.");
       
@@ -431,7 +338,6 @@ bot.on('message', async (msg) => {
   const currentState = { ...state };
   delete userStates[chatId];
 
-  // Estado para procesar baneo
   if (currentState.step === 'AWAITING_BAN_ID' && isAdmin) {
     const targetId = text.trim();
     if (PRINCIPAL_ADMINS.includes(parseInt(targetId))) return bot.sendMessage(chatId, "❌ No puedes banear a un Admin Principal.");
@@ -601,14 +507,12 @@ bot.on('message', async (msg) => {
   }
 });
 
-// --- 5. MANEJO DE BOTONES EN LÍNEA ---
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const responder = () => bot.answerCallbackQuery(query.id).catch(()=>{});
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
 
-  // NUEVO: Opciones de Banear y Desbanear
   if (isAdmin) {
     if (data === "action_ban") {
       userStates[chatId] = { step: 'AWAITING_BAN_ID' };
@@ -851,4 +755,3 @@ bot.on('callback_query', async (query) => {
 });
 
 console.log("Bot TEMO STORE iniciado...");
-console.log("Bot TIKTOK GRATIS iniciado...");
