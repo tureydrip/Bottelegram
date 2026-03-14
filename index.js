@@ -70,29 +70,6 @@ async function getTikTokVideo(url) {
   }
 }
 
-// FUNCIONES DE RANGO Y DESCUENTOS
-function getGastoTotal(userData) {
-  let total = 0;
-  if (userData && userData.keys_compradas) {
-    let keysArr = Array.isArray(userData.keys_compradas) ? userData.keys_compradas : Object.values(userData.keys_compradas);
-    keysArr.forEach(k => {
-      if (k && typeof k === 'object' && k.gasto) {
-        total += Number(k.gasto);
-      }
-    });
-  }
-  return total;
-}
-
-function getRango(gastoTotal) {
-  if (gastoTotal >= 250) return "Elite";
-  if (gastoTotal >= 200) return "Deluxe";
-  if (gastoTotal >= 150) return "Diamond";
-  if (gastoTotal >= 100) return "Premium";
-  if (gastoTotal >= 50) return "VIP";
-  return "Normal";
-}
-
 // --- 4. LÓGICA PRINCIPAL ---
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
@@ -143,10 +120,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
     const row3 = [];
     if (hasPermission('view_stock')) row3.push({ text: "📊 Ver Stocks" });
-    if (hasPermission('edit_price')) { 
-        row3.push({ text: "✏️ Editar Precios" });
-        row3.push({ text: "💸 Descuentos" }); // NUEVO BOTÓN
-    }
+    if (hasPermission('edit_price')) row3.push({ text: "✏️ Editar Precios" });
     if (row3.length > 0) keyboard.push(row3);
 
     const row4 = [];
@@ -193,13 +167,8 @@ bot.on('message', async (msg) => {
   if (text === "👤 Mi Perfil") {
     const userData = (await get(ref(db, `users/${chatId}`))).val() || { saldo: 0, invitados: 0, tiktok_credits: 0 };
     const linkReferido = `https://t.me/${botUsername}?start=${chatId}`;
-    
-    // Calcular Rango
-    const gastoTotal = getGastoTotal(userData);
-    const rangoActual = getRango(gastoTotal);
 
     let texto = `👤 *Tu Perfil*\n\n💰 Saldo: $${userData.saldo}\n🆔 Tu ID: \`${chatId}\`\n\n`;
-    texto += `🎖️ *Tu Rango:* ${rangoActual}\n💸 *Gasto Total:* $${gastoTotal}\n\n`;
     texto += `📱 *TikTok Downloader:*\n- Créditos disponibles: ${userData.tiktok_credits}\n- Personas invitadas: ${userData.invitados}\n\n`;
     texto += `🔗 *Tu link de referidos:*\n\`${linkReferido}\`\n_(Invita a 5 personas con este link para ganar 2 créditos para videos gratis)_\n\n`;
     texto += `🔑 *Tus Keys Compradas:*\n`;
@@ -260,22 +229,6 @@ bot.on('message', async (msg) => {
   }
 
   if (isAdmin) {
-    if (text === "💸 Descuentos") {
-      if (!hasPermission('edit_price')) return bot.sendMessage(chatId, "❌ No tienes permiso para esta función.");
-      
-      const botones = [
-        [{ text: "💎 VIP", callback_data: "disc_rank:VIP" }, { text: "🌟 Premium", callback_data: "disc_rank:Premium" }],
-        [{ text: "💠 Diamond", callback_data: "disc_rank:Diamond" }, { text: "🔥 Deluxe", callback_data: "disc_rank:Deluxe" }],
-        [{ text: "👑 Elite", callback_data: "disc_rank:Elite" }],
-        [{ text: "❌ Desactivar un descuento", callback_data: "disc_disable" }]
-      ];
-      
-      return bot.sendMessage(chatId, "📊 *Gestión de Descuentos*\nSelecciona a qué rango le aplicarás el descuento:", { 
-        parse_mode: "Markdown", 
-        reply_markup: { inline_keyboard: botones } 
-      });
-    }
-
     if (text === "🛡️ Proteger Usuario" && chatId === 7710633235) {
       userStates[chatId] = { step: 'AWAITING_PROTECT_USER_ID' };
       return bot.sendMessage(chatId, "🛡️ Envía el **ID del usuario** que deseas proteger (o desproteger):", { parse_mode: "Markdown" });
@@ -385,40 +338,7 @@ bot.on('message', async (msg) => {
   const currentState = { ...state };
   delete userStates[chatId];
 
-  // ESTADOS DE DESCUENTO
-  if (currentState.step === 'AWAITING_DISC_LABEL') {
-    const label = text.trim();
-    userStates[chatId] = { step: 'AWAITING_DISC_AMOUNT', rank: currentState.rank, label: label };
-    bot.sendMessage(chatId, `🏷️ Etiqueta de descuento guardada: *${label}*\n\nAhora, escribe la **cantidad real a descontar** del precio (Ejemplo: si vas a rebajar 20 centavos escribe \`0.20\`):`, { parse_mode: "Markdown" });
-  }
-
-  else if (currentState.step === 'AWAITING_DISC_AMOUNT') {
-    const amount = parseFloat(text.trim());
-    if (isNaN(amount) || amount <= 0) {
-      return bot.sendMessage(chatId, "❌ Cantidad inválida. Operación cancelada.");
-    }
-
-    await set(ref(db, `descuentos/${currentState.rank}`), { etiqueta: currentState.label, rebaja: amount });
-    bot.sendMessage(chatId, `✅ Descuento configurado.\nLos usuarios **${currentState.rank}** ahora tienen un rebaje de **$${amount}** etiquetado como "${currentState.label}".\n\n📢 Notificando a los usuarios...`, { parse_mode: "Markdown" });
-
-    // Notificar a usuarios de ese rango
-    const usersSnap = await get(ref(db, 'users'));
-    let count = 0;
-    if (usersSnap.exists()) {
-      usersSnap.forEach((child) => {
-        const u = child.val();
-        const gasto = getGastoTotal(u);
-        const rango = getRango(gasto);
-        if (rango === currentState.rank) {
-          bot.sendMessage(child.key, `🎉 *¡NUEVO DESCUENTO ACTIVO PARA TI!*\n\nPor tu fidelidad y ser rango *${currentState.rank}*, se ha activado un descuento de *${currentState.label}* en la tienda.\n\n🛒 ¡Ve a 'Ver Productos' para aprovecharlo!`, { parse_mode: "Markdown" }).catch(()=>{});
-          count++;
-        }
-      });
-    }
-    bot.sendMessage(chatId, `✅ Se notificó correctamente a **${count}** usuarios con el rango ${currentState.rank}.`, { parse_mode: "Markdown" });
-  }
-
-  else if (currentState.step === 'AWAITING_BAN_ID' && isAdmin) {
+  if (currentState.step === 'AWAITING_BAN_ID' && isAdmin) {
     const targetId = text.trim();
     if (PRINCIPAL_ADMINS.includes(parseInt(targetId))) return bot.sendMessage(chatId, "❌ No puedes banear a un Admin Principal.");
     
@@ -594,36 +514,6 @@ bot.on('callback_query', async (query) => {
   const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
 
   if (isAdmin) {
-    // LÓGICA DE BOTONES PARA DESCUENTOS
-    if (data.startsWith('disc_rank:')) {
-      const rank = data.split(':')[1];
-      userStates[chatId] = { step: 'AWAITING_DISC_LABEL', rank: rank };
-      bot.sendMessage(chatId, `Has seleccionado aplicar descuento al rango: **${rank}**.\n\nEscribe la **etiqueta del descuento** (Por ejemplo: \`10%\` o \`Mitad de Precio\`):`, { parse_mode: "Markdown" });
-      return responder();
-    }
-
-    if (data === "disc_disable") {
-      const botones = [
-        [{ text: "💎 Quitar a VIP", callback_data: "disc_del:VIP" }, { text: "🌟 Quitar a Premium", callback_data: "disc_del:Premium" }],
-        [{ text: "💠 Quitar a Diamond", callback_data: "disc_del:Diamond" }, { text: "🔥 Quitar a Deluxe", callback_data: "disc_del:Deluxe" }],
-        [{ text: "👑 Quitar a Elite", callback_data: "disc_del:Elite" }]
-      ];
-      bot.sendMessage(chatId, "Selecciona el rango al que deseas **DESACTIVAR** el descuento:", { parse_mode: "Markdown", reply_markup: { inline_keyboard: botones } });
-      return responder();
-    }
-
-    if (data.startsWith('disc_del:')) {
-      const rank = data.split(':')[1];
-      await remove(ref(db, `descuentos/${rank}`));
-      bot.editMessageText(`✅ Descuento desactivado exitosamente para el rango **${rank}**.`, { 
-        chat_id: chatId, 
-        message_id: query.message.message_id, 
-        parse_mode: "Markdown" 
-      });
-      return responder();
-    }
-
-    // BOTONES DE BANEO
     if (data === "action_ban") {
       userStates[chatId] = { step: 'AWAITING_BAN_ID' };
       bot.sendMessage(chatId, "🚫 Envía el **ID del usuario** que deseas banear del bot:", { parse_mode: "Markdown" });
@@ -714,38 +604,14 @@ bot.on('callback_query', async (query) => {
     return responder();
   }
 
-  // --- LÓGICA DE COMPRA Y APLICACIÓN DE DESCUENTO ---
   if (data.startsWith('buy_prod:')) {
     const prodId = data.split(':')[1];
     const producto = (await get(ref(db, `productos/${prodId}`))).val();
     if (!producto || !producto.opciones) { bot.sendMessage(chatId, "Producto sin duraciones."); return responder(); }
 
-    // Verificar si el usuario tiene un rango y un descuento activo
-    const user = (await get(ref(db, `users/${chatId}`))).val() || {};
-    const userGasto = getGastoTotal(user);
-    const userRango = getRango(userGasto);
-    
-    const discSnap = await get(ref(db, `descuentos/${userRango}`));
-    let descData = null;
-    if (discSnap.exists()) descData = discSnap.val();
-
     const botones = [];
-    for (const optId in producto.opciones) {
-      let precioNormal = producto.opciones[optId].precio;
-      let textoPrecio = `$${precioNormal}`;
-      
-      // Si hay descuento, calcular el nuevo precio visualmente
-      if (descData && !isAdmin) { // Los admins ven el precio normal (o como prefieras)
-        let precioDescuento = precioNormal - descData.rebaja;
-        if (precioDescuento < 0) precioDescuento = 0;
-        textoPrecio = `~$${precioNormal}~ $${precioDescuento} (${descData.etiqueta})`;
-      }
-
-      botones.push([{ text: `${producto.opciones[optId].titulo} - ${textoPrecio}`, callback_data: `checkout:${prodId}:${optId}` }]);
-    }
-    
-    let msgExtra = descData && !isAdmin ? `\n\n🎁 Tienes un descuento activo de *${descData.etiqueta}* por ser rango *${userRango}*` : "";
-    bot.sendMessage(chatId, `🛒 *${producto.nombre}*${msgExtra}\nElige la duración:`, { parse_mode: "Markdown", reply_markup: { inline_keyboard: botones } });
+    for (const optId in producto.opciones) botones.push([{ text: `${producto.opciones[optId].titulo} - $${producto.opciones[optId].precio}`, callback_data: `checkout:${prodId}:${optId}` }]);
+    bot.sendMessage(chatId, `🛒 *${producto.nombre}*\nElige la duración:`, { parse_mode: "Markdown", reply_markup: { inline_keyboard: botones } });
     return responder();
   }
 
@@ -759,26 +625,10 @@ bot.on('callback_query', async (query) => {
     if (!Array.isArray(keysDisp)) keysDisp = Object.values(keysDisp);
 
     if (keysDisp.length === 0) { bot.sendMessage(chatId, "❌ No hay keys disponibles."); return responder(); }
-    
-    // Aplicar descuento al momento de cobrar
-    let precioFinal = opt.precio;
-    const userGasto = getGastoTotal(user);
-    const userRango = getRango(userGasto);
-    
-    const discSnap = await get(ref(db, `descuentos/${userRango}`));
-    if (discSnap.exists() && !isAdmin) {
-      const descData = discSnap.val();
-      precioFinal = opt.precio - descData.rebaja;
-      if (precioFinal < 0) precioFinal = 0;
-    }
-
-    if (user.saldo < precioFinal) { 
-      bot.sendMessage(chatId, `❌ *Saldo insuficiente.*\nTu saldo: $${user.saldo}\nPrecio Final: $${precioFinal}`, { parse_mode: "Markdown" }); 
-      return responder(); 
-    }
+    if (user.saldo < opt.precio) { bot.sendMessage(chatId, `❌ *Saldo insuficiente.*\nTu saldo: $${user.saldo}\nPrecio: $${opt.precio}`, { parse_mode: "Markdown" }); return responder(); }
 
     const keyEntregada = keysDisp[0];
-    const nuevoSaldo = user.saldo - precioFinal; 
+    const nuevoSaldo = user.saldo - opt.precio; 
     let keysUser = user.keys_compradas || [];
     if (!Array.isArray(keysUser)) keysUser = Object.values(keysUser);
     
@@ -787,13 +637,13 @@ bot.on('callback_query', async (query) => {
     const nuevaCompra = {
       key: keyEntregada,
       producto: `${prodName} (${opt.titulo})`,
-      gasto: precioFinal, // Guarda el gasto real para que sume a su rango
+      gasto: opt.precio,
       fecha: fechaCompra
     };
     keysUser.push(nuevaCompra);
 
     await update(ref(db), { [`users/${chatId}/saldo`]: nuevoSaldo, [`users/${chatId}/keys_compradas`]: keysUser, [`productos/${prodId}/opciones/${optId}/keys`]: keysDisp.slice(1) });
-    bot.sendMessage(chatId, `✅ *¡COMPRA EXITOSA!*\n\nCompraste: *${opt.titulo}*\nKey: \`${keyEntregada}\`\n💰 Saldo restante: $${nuevoSaldo}`, { parse_mode: "Markdown" });
+    bot.sendMessage(chatId, `✅ *¡COMPRA EXITOSA!*\n\nCompraste: *${opt.titulo}*\nKey: \`${keyEntregada}\`\n💰 Saldo: $${nuevoSaldo}`, { parse_mode: "Markdown" });
     
     if (keysDisp.slice(1).length === 0) {
       PRINCIPAL_ADMINS.forEach((adminId) => bot.sendMessage(adminId, `⚠️ *ALERTA DE INVENTARIO*\nSe agotaron las keys de ${prodName} (${opt.titulo}).`, { parse_mode: "Markdown" }).catch(() => {}));
@@ -904,4 +754,4 @@ bot.on('callback_query', async (query) => {
   responder();
 });
 
-console.log("Bot TEMO STORE iniciado con sistema de rangos y descuentos...");
+console.log("Bot TEMO STORE iniciado...");
