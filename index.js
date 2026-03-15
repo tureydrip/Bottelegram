@@ -210,34 +210,52 @@ bot.on('message', async (msg) => {
     const { isAdmin, isPrincipal, hasPermission } = await checkAdminPermissions(chatId);
 
     if (text === "👤 Mi Perfil") {
-      const userData = (await get(ref(db, `users/${chatId}`))).val() || { saldo: 0, invitados: 0, tiktok_credits: 0 };
-      const linkReferido = `https://t.me/${botUsername}?start=${chatId}`;
-      
-      const gastoTotal = getGastoTotal(userData);
-      const rangoActual = getRango(gastoTotal);
+      try {
+        const userData = (await get(ref(db, `users/${chatId}`))).val() || {};
+        const linkReferido = `https://t.me/${botUsername}?start=${chatId}`;
+        
+        // Protecciones por si los datos en Firebase están vacíos o corruptos
+        const saldo = userData.saldo || 0;
+        const creditos = userData.tiktok_credits || 0;
+        const invitados = userData.invitados || 0;
 
-      let texto = `👤 *Tu Perfil*\n\n💰 Saldo: $${userData.saldo}\n🆔 Tu ID: \`${chatId}\`\n\n`;
-      texto += `🎖️ *Tu Rango:* ${rangoActual}\n💸 *Gasto Total:* $${gastoTotal}\n\n`;
-      texto += `📱 *TikTok Downloader:*\n- Créditos disponibles: ${userData.tiktok_credits || 0}\n- Personas invitadas: ${userData.invitados || 0}\n\n`;
-      texto += `🔗 *Tu link de referidos:*\n\`${linkReferido}\`\n_(Invita a 5 personas con este link para ganar 2 créditos para videos gratis)_\n\n`;
-      texto += `🔑 *Tus Keys Compradas:*\n`;
-      
-      let keysArr = userData.keys_compradas || [];
-      if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+        const gastoTotal = getGastoTotal(userData);
+        const rangoActual = getRango(gastoTotal);
 
-      if (keysArr.length > 0) {
-        keysArr.forEach(k => {
-          if (typeof k === 'object') {
-            texto += `- \`${k.key}\` (Gastaste: $${k.gasto})\n`;
-          } else {
-            texto += `- \`${k}\`\n`;
+        let texto = `👤 *Tu Perfil*\n\n💰 Saldo: $${saldo}\n🆔 Tu ID: \`${chatId}\`\n\n`;
+        texto += `🎖️ *Tu Rango:* ${rangoActual}\n💸 *Gasto Total:* $${gastoTotal}\n\n`;
+        texto += `📱 *TikTok Downloader:*\n- Créditos disponibles: ${creditos}\n- Personas invitadas: ${invitados}\n\n`;
+        texto += `🔗 *Tu link de referidos:*\n\`${linkReferido}\`\n_(Invita a 5 personas con este link para ganar 2 créditos para videos gratis)_\n\n`;
+        texto += `🔑 *Tus Últimas Compras:*\n`;
+        
+        let keysArr = userData.keys_compradas || [];
+        if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+
+        if (keysArr.length > 0) {
+          // Cortar el array para mostrar solo las ÚLTIMAS 10 keys compradas
+          const ultimasKeys = keysArr.slice(-10);
+          
+          ultimasKeys.forEach(k => {
+            if (typeof k === 'object') {
+              texto += `- \`${k.key}\` (Gastaste: $${k.gasto || 0})\n`;
+            } else {
+              texto += `- \`${k}\`\n`;
+            }
+          });
+
+          // Si tiene más de 10 compras, le avisamos que hay más en el historial oculto
+          if (keysArr.length > 10) {
+            texto += `\n_...y ${keysArr.length - 10} compras antiguas más._`;
           }
-        });
-      } else {
-        texto += "Aún no tienes keys.";
+        } else {
+          texto += "Aún no tienes keys.";
+        }
+        
+        return bot.sendMessage(chatId, texto, { parse_mode: "Markdown", disable_web_page_preview: true });
+      } catch (error) {
+        console.error(`Error cargando el perfil del ID ${chatId}:`, error);
+        return bot.sendMessage(chatId, "⚠️ *Error interno:* Tu perfil tiene datos corruptos o demasiada información acumulada por pruebas. Avisa al desarrollador.", { parse_mode: "Markdown" });
       }
-      
-      return bot.sendMessage(chatId, texto, { parse_mode: "Markdown", disable_web_page_preview: true });
     }
 
     if (text === "💳 Recargar Saldo") {
@@ -848,4 +866,4 @@ bot.on('callback_query', async (query) => {
   }
 });
 
-console.log("Bot TEMO STORE iniciado con sistemas de control de errores integrados...");
+console.log("Bot TEMO STORE iniciado con sistemas de control de errores integrados y límite de perfil...");
