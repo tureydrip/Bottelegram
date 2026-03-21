@@ -169,7 +169,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
       if (hasPermission('ban_user')) row4.push({ text: "🚫 Banear / Desbanear" }); 
       if (row4.length > 0) keyboard.push(row4);
 
-      // NUEVA FILA DE DEVOLUCIÓN
       const row5 = [];
       if (hasPermission('return_keys') || isPrincipal) row5.push({ text: "🔄 Devolver Keys" });
       if (row5.length > 0) keyboard.push(row5);
@@ -295,9 +294,7 @@ bot.on('message', async (msg) => {
       }
     }
 
-    // --- FUNCIONES DE ADMINISTRADOR ---
     if (isAdmin) {
-      // LOGICA DE DEVOLVER KEYS
       if (text === "🔄 Devolver Keys") {
         if (!hasPermission('return_keys') && !isPrincipal) return bot.sendMessage(chatId, "❌ No tienes permiso.");
         userStates[chatId] = { step: 'AWAITING_RETURN_USER_ID' };
@@ -411,12 +408,12 @@ bot.on('message', async (msg) => {
       }
     }
 
-    // --- LÓGICA DE ESTADOS ---
     const state = userStates[chatId];
     if (!state) return;
     const currentState = { ...state };
     delete userStates[chatId];
 
+    // --- LÓGICA DE AGRUPAR KEYS PARA DEVOLVER ---
     if (currentState.step === 'AWAITING_RETURN_USER_ID') {
       const uId = text.trim();
       const uSnap = await get(ref(db, `users/${uId}`));
@@ -430,18 +427,29 @@ bot.on('message', async (msg) => {
 
       if (keysArr.length === 0) return bot.sendMessage(chatId, "Este usuario no ha realizado ninguna compra.");
 
-      let botones = [];
+      // AGRUPAR POR PRODUCTO Y FECHA CORTA
+      let gruposDict = {};
       keysArr.forEach((k, index) => {
         if (typeof k === 'object') {
-          // Extraemos solo la fecha sin la hora para que el botón no sea muy largo
-          let fechaCorta = k.fecha ? k.fecha.split(',')[0] : "Desconocida";
-          botones.push([{ text: `${k.producto} - ${fechaCorta}`, callback_data: `sel_ret:${uId}:${index}` }]);
+          let fechaCorta = k.fecha ? k.fecha.split(',')[0].trim() : "Desconocida";
+          let hash = `${k.producto}_${fechaCorta}`;
+          if (!gruposDict[hash]) {
+            gruposDict[hash] = { producto: k.producto, fecha: fechaCorta, indices: [] };
+          }
+          gruposDict[hash].indices.push(index); // Guardamos el índice real para no perderlo
         }
+      });
+
+      let grupos = Object.values(gruposDict);
+      let botones = [];
+      
+      grupos.forEach((g, i) => {
+        botones.push([{ text: `📦 ${g.producto} - ${g.fecha} (${g.indices.length} keys)`, callback_data: `grp_ret:${uId}:${i}` }]);
       });
 
       if (botones.length === 0) return bot.sendMessage(chatId, "❌ El usuario solo tiene compras antiguas sin formato compatible para devolver.");
 
-      bot.sendMessage(chatId, `👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n⬇️ Selecciona el producto que deseas devolver a la tienda:`, { parse_mode: "Markdown", reply_markup: { inline_keyboard: botones } });
+      bot.sendMessage(chatId, `👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n⬇️ Selecciona el bloque que deseas gestionar:`, { parse_mode: "Markdown", reply_markup: { inline_keyboard: botones } });
     }
     else if (currentState.step === 'AWAITING_DISC_LABEL') {
       const label = text.trim();
@@ -638,6 +646,87 @@ bot.on('callback_query', async (query) => {
 
     if (isAdmin) {
       // EVENTOS DE DEVOLVER KEYS
+
+      // Cuando el admin cliquea el bloque (ej: Cuban Mods - 14/01)
+      if (data.startsWith('grp_ret:')) {
+        const [, uId, groupIndex] = data.split(':');
+        const uSnap = await get(ref(db, `users/${uId}`));
+        if (!uSnap.exists()) return;
+        
+        let keysArr = uSnap.val().keys_compradas || [];
+        if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+
+        // Reconstruimos los grupos tal cual para extraer los índices
+        let gruposDict = {};
+        keysArr.forEach((k, index) => {
+          if (typeof k === 'object') {
+            let fechaCorta = k.fecha ? k.fecha.split(',')[0].trim() : "Desconocida";
+            let hash = `${k.producto}_${fechaCorta}`;
+            if (!gruposDict[hash]) {
+              gruposDict[hash] = { producto: k.producto, fecha: fechaCorta, indices: [] };
+            }
+            gruposDict[hash].indices.push(index);
+          }
+        });
+
+        let grupos = Object.values(gruposDict);
+        let g = grupos[parseInt(groupIndex)];
+
+        if (!g) return bot.sendMessage(chatId, "❌ Grupo no encontrado o ya fue procesado completo.");
+
+        let botonesKeys = [];
+        g.indices.forEach(idx => {
+          let k = keysArr[idx];
+          // Recortamos la key para que el botón no quede gigante
+          let keyText = k.key.length > 25 ? k.key.substring(0, 25) + "..." : k.key;
+          botonesKeys.push([{ text: `🔑 ${keyText}`, callback_data: `sel_ret:${uId}:${idx}` }]);
+        });
+        
+        botonesKeys.push([{ text: "🔙 Volver a los grupos", callback_data: `ret_back:${uId}` }]);
+
+        return bot.editMessageText(`📦 *${g.producto}*\n📅 *Fecha:* ${g.fecha}\n\n⬇️ Selecciona la Key específica que deseas devolver a la tienda:`, {
+          chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown", reply_markup: { inline_keyboard: botonesKeys }
+        });
+      }
+
+      // Para volver a la vista agrupada después de ver las keys de un grupo o devolver una
+      if (data.startsWith('ret_back:')) {
+        const [, uId] = data.split(':');
+        const uSnap = await get(ref(db, `users/${uId}`));
+        if (!uSnap.exists()) return;
+        let u = uSnap.val();
+        let keysArr = u.keys_compradas || [];
+        if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+
+        let gruposDict = {};
+        keysArr.forEach((k, index) => {
+          if (typeof k === 'object') {
+            let fechaCorta = k.fecha ? k.fecha.split(',')[0].trim() : "Desconocida";
+            let hash = `${k.producto}_${fechaCorta}`;
+            if (!gruposDict[hash]) {
+              gruposDict[hash] = { producto: k.producto, fecha: fechaCorta, indices: [] };
+            }
+            gruposDict[hash].indices.push(index);
+          }
+        });
+
+        let grupos = Object.values(gruposDict);
+        let botones = [];
+        grupos.forEach((g, i) => {
+          botones.push([{ text: `📦 ${g.producto} - ${g.fecha} (${g.indices.length} keys)`, callback_data: `grp_ret:${uId}:${i}` }]);
+        });
+
+        if (botones.length === 0) {
+            return bot.editMessageText(`👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\nEste usuario ya no tiene compras registradas.`, {
+               chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown"
+            });
+        }
+
+        return bot.editMessageText(`👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n⬇️ Selecciona el bloque que deseas gestionar:`, {
+          chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown", reply_markup: { inline_keyboard: botones }
+        });
+      }
+
       if (data.startsWith('sel_ret:')) {
         const [, uId, index] = data.split(':');
         const uSnap = await get(ref(db, `users/${uId}`));
@@ -651,16 +740,12 @@ bot.on('callback_query', async (query) => {
 
         const confirmBtn = [
           [{ text: "✅ Sí, devolver a la tienda", callback_data: `conf_ret:${uId}:${index}` }],
-          [{ text: "❌ Cancelar", callback_data: `cancel_ret` }]
+          [{ text: "🔙 Cancelar y Volver", callback_data: `ret_back:${uId}` }]
         ];
 
         return bot.editMessageText(`⚠️ *¿Seguro que deseas devolver esta compra?*\n\n🔹 *Producto:* ${k.producto}\n🔑 *Key:* \`${k.key}\`\n📅 *Fecha:* ${k.fecha}\n\n*Al confirmar, la key se eliminará del usuario y se reabastecerá en tu tienda.*`, {
           chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown", reply_markup: { inline_keyboard: confirmBtn }
         });
-      }
-
-      if (data === "cancel_ret") {
-        return bot.editMessageText("❌ Acción de devolución cancelada.", { chat_id: chatId, message_id: query.message.message_id });
       }
 
       if (data.startsWith('conf_ret:')) {
@@ -676,11 +761,9 @@ bot.on('callback_query', async (query) => {
         const targetKeyObj = keysArr[index];
         if (!targetKeyObj) return bot.sendMessage(chatId, "❌ Error: La key ya no existe en el historial.");
 
-        // Eliminarla del usuario
         keysArr.splice(index, 1);
         await set(ref(db, `users/${uId}/keys_compradas`), keysArr);
 
-        // Buscar el producto original para devolver la key
         const prodsSnap = await get(ref(db, 'productos'));
         let foundRef = null;
         let currentKeys = [];
@@ -712,9 +795,13 @@ bot.on('callback_query', async (query) => {
           restockMsg = "⚠️ *El producto original ya no existe en la tienda, así que la key no se pudo reabastecer, pero sí se eliminó del usuario.*";
         }
 
-        bot.editMessageText(`✅ *DEVOLUCIÓN COMPLETADA*\n\nSe revocó la key \`${targetKeyObj.key}\` del ID \`${uId}\`.\n\n${restockMsg}`, { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" });
+        bot.editMessageText(`✅ *DEVOLUCIÓN COMPLETADA*\n\nSe revocó la key \`${targetKeyObj.key}\` del ID \`${uId}\`.\n\n${restockMsg}`, { 
+          chat_id: chatId, 
+          message_id: query.message.message_id, 
+          parse_mode: "Markdown",
+          reply_markup: { inline_keyboard: [[{ text: "🔙 Volver a compras del usuario", callback_data: `ret_back:${uId}` }]] }
+        });
         
-        // Notificar al usuario discretamente
         bot.sendMessage(uId, `⚠️ Un administrador ha revocado y devuelto tu producto:\n*${targetKeyObj.producto}*`).catch(()=>{});
         return;
       }
