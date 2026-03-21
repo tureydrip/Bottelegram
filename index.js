@@ -169,6 +169,11 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
       if (hasPermission('ban_user')) row4.push({ text: "🚫 Banear / Desbanear" }); 
       if (row4.length > 0) keyboard.push(row4);
 
+      // NUEVA FILA DE DEVOLUCIÓN
+      const row5 = [];
+      if (hasPermission('return_keys') || isPrincipal) row5.push({ text: "🔄 Devolver Keys" });
+      if (row5.length > 0) keyboard.push(row5);
+
       keyboard.push([{ text: "📱 Descargar TikTok" }]);
 
       if (isPrincipal) keyboard.push([{ text: "👥 Gestionar Admins" }]);
@@ -214,7 +219,6 @@ bot.on('message', async (msg) => {
         const userData = (await get(ref(db, `users/${chatId}`))).val() || {};
         const linkReferido = `https://t.me/${botUsername}?start=${chatId}`;
         
-        // Protecciones por si los datos en Firebase están vacíos o corruptos
         const saldo = userData.saldo || 0;
         const creditos = userData.tiktok_credits || 0;
         const invitados = userData.invitados || 0;
@@ -232,9 +236,7 @@ bot.on('message', async (msg) => {
         if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
 
         if (keysArr.length > 0) {
-          // Cortar el array para mostrar solo las ÚLTIMAS 10 keys compradas
           const ultimasKeys = keysArr.slice(-10);
-          
           ultimasKeys.forEach(k => {
             if (typeof k === 'object') {
               texto += `- \`${k.key}\` (Gastaste: $${k.gasto || 0})\n`;
@@ -242,8 +244,6 @@ bot.on('message', async (msg) => {
               texto += `- \`${k}\`\n`;
             }
           });
-
-          // Si tiene más de 10 compras, le avisamos que hay más en el historial oculto
           if (keysArr.length > 10) {
             texto += `\n_...y ${keysArr.length - 10} compras antiguas más._`;
           }
@@ -254,7 +254,7 @@ bot.on('message', async (msg) => {
         return bot.sendMessage(chatId, texto, { parse_mode: "Markdown", disable_web_page_preview: true });
       } catch (error) {
         console.error(`Error cargando el perfil del ID ${chatId}:`, error);
-        return bot.sendMessage(chatId, "⚠️ *Error interno:* Tu perfil tiene datos corruptos o demasiada información acumulada por pruebas. Avisa al desarrollador.", { parse_mode: "Markdown" });
+        return bot.sendMessage(chatId, "⚠️ *Error interno:* Tu perfil tiene datos corruptos. Avisa al desarrollador.", { parse_mode: "Markdown" });
       }
     }
 
@@ -297,6 +297,13 @@ bot.on('message', async (msg) => {
 
     // --- FUNCIONES DE ADMINISTRADOR ---
     if (isAdmin) {
+      // LOGICA DE DEVOLVER KEYS
+      if (text === "🔄 Devolver Keys") {
+        if (!hasPermission('return_keys') && !isPrincipal) return bot.sendMessage(chatId, "❌ No tienes permiso.");
+        userStates[chatId] = { step: 'AWAITING_RETURN_USER_ID' };
+        return bot.sendMessage(chatId, "🔍 Envía el **ID del usuario** al que deseas devolverle las keys:", { parse_mode: "Markdown" });
+      }
+
       if (text === "💸 Descuentos") {
         if (!hasPermission('edit_price')) return bot.sendMessage(chatId, "❌ No tienes permiso.");
         const botones = [
@@ -410,7 +417,33 @@ bot.on('message', async (msg) => {
     const currentState = { ...state };
     delete userStates[chatId];
 
-    if (currentState.step === 'AWAITING_DISC_LABEL') {
+    if (currentState.step === 'AWAITING_RETURN_USER_ID') {
+      const uId = text.trim();
+      const uSnap = await get(ref(db, `users/${uId}`));
+      if (!uSnap.exists()) return bot.sendMessage(chatId, "❌ Usuario no encontrado.");
+
+      const u = uSnap.val();
+      if (u.protegido && chatId !== 7710633235) return bot.sendMessage(chatId, "❌ No tienes permisos sobre este usuario.");
+
+      let keysArr = u.keys_compradas || [];
+      if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+
+      if (keysArr.length === 0) return bot.sendMessage(chatId, "Este usuario no ha realizado ninguna compra.");
+
+      let botones = [];
+      keysArr.forEach((k, index) => {
+        if (typeof k === 'object') {
+          // Extraemos solo la fecha sin la hora para que el botón no sea muy largo
+          let fechaCorta = k.fecha ? k.fecha.split(',')[0] : "Desconocida";
+          botones.push([{ text: `${k.producto} - ${fechaCorta}`, callback_data: `sel_ret:${uId}:${index}` }]);
+        }
+      });
+
+      if (botones.length === 0) return bot.sendMessage(chatId, "❌ El usuario solo tiene compras antiguas sin formato compatible para devolver.");
+
+      bot.sendMessage(chatId, `👤 *Usuario:* ${u.nombre}\n🆔 *ID:* \`${uId}\`\n\n⬇️ Selecciona el producto que deseas devolver a la tienda:`, { parse_mode: "Markdown", reply_markup: { inline_keyboard: botones } });
+    }
+    else if (currentState.step === 'AWAITING_DISC_LABEL') {
       const label = text.trim();
       userStates[chatId] = { step: 'AWAITING_DISC_AMOUNT', rank: currentState.rank, label: label };
       bot.sendMessage(chatId, `🏷️ Etiqueta de descuento guardada: *${label}*\n\nAhora, escribe la **cantidad real a descontar** del precio (Ej: \`0.20\`):`, { parse_mode: "Markdown" });
@@ -495,7 +528,7 @@ bot.on('message', async (msg) => {
     }
     else if (currentState.step === 'AWAITING_NEW_ADMIN_ID' && isPrincipal) {
       const newAdminId = text.trim();
-      await set(ref(db, `sub_admins/${newAdminId}`), { agregado_por: chatId, permisos: { add_saldo: false, remove_saldo: false, create_prod: false, manage_prod: false, view_stock: false, edit_price: false, view_history: false, ban_user: false } });
+      await set(ref(db, `sub_admins/${newAdminId}`), { agregado_por: chatId, permisos: { add_saldo: false, remove_saldo: false, create_prod: false, manage_prod: false, view_stock: false, edit_price: false, view_history: false, ban_user: false, return_keys: false } });
       bot.sendMessage(chatId, `✅ Sub-Admin \`${newAdminId}\` agregado. Actívale funciones en "🎛️ Configurar Permisos".`, { parse_mode: "Markdown" });
     }
     else if (currentState.step === 'AWAITING_USER_ID') {
@@ -597,7 +630,6 @@ bot.on('message', async (msg) => {
 
 bot.on('callback_query', async (query) => {
   try {
-    // 🚀 Responder de inmediato evita que el botón en Telegram se quede cargando
     bot.answerCallbackQuery(query.id).catch(()=>{});
 
     const chatId = query.message.chat.id;
@@ -605,6 +637,88 @@ bot.on('callback_query', async (query) => {
     const { isAdmin, isPrincipal } = await checkAdminPermissions(chatId);
 
     if (isAdmin) {
+      // EVENTOS DE DEVOLVER KEYS
+      if (data.startsWith('sel_ret:')) {
+        const [, uId, index] = data.split(':');
+        const uSnap = await get(ref(db, `users/${uId}`));
+        if (!uSnap.exists()) return;
+        const uData = uSnap.val();
+        let keysArr = uData.keys_compradas || [];
+        if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+
+        const k = keysArr[index];
+        if (!k) return bot.sendMessage(chatId, "❌ Key no encontrada.");
+
+        const confirmBtn = [
+          [{ text: "✅ Sí, devolver a la tienda", callback_data: `conf_ret:${uId}:${index}` }],
+          [{ text: "❌ Cancelar", callback_data: `cancel_ret` }]
+        ];
+
+        return bot.editMessageText(`⚠️ *¿Seguro que deseas devolver esta compra?*\n\n🔹 *Producto:* ${k.producto}\n🔑 *Key:* \`${k.key}\`\n📅 *Fecha:* ${k.fecha}\n\n*Al confirmar, la key se eliminará del usuario y se reabastecerá en tu tienda.*`, {
+          chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown", reply_markup: { inline_keyboard: confirmBtn }
+        });
+      }
+
+      if (data === "cancel_ret") {
+        return bot.editMessageText("❌ Acción de devolución cancelada.", { chat_id: chatId, message_id: query.message.message_id });
+      }
+
+      if (data.startsWith('conf_ret:')) {
+        const [, uId, index] = data.split(':');
+        const userRef = ref(db, `users/${uId}`);
+        const uSnap = await get(userRef);
+        if (!uSnap.exists()) return;
+
+        let uData = uSnap.val();
+        let keysArr = uData.keys_compradas || [];
+        if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
+
+        const targetKeyObj = keysArr[index];
+        if (!targetKeyObj) return bot.sendMessage(chatId, "❌ Error: La key ya no existe en el historial.");
+
+        // Eliminarla del usuario
+        keysArr.splice(index, 1);
+        await set(ref(db, `users/${uId}/keys_compradas`), keysArr);
+
+        // Buscar el producto original para devolver la key
+        const prodsSnap = await get(ref(db, 'productos'));
+        let foundRef = null;
+        let currentKeys = [];
+
+        if (prodsSnap.exists()) {
+          prodsSnap.forEach(prodSnap => {
+            const prodData = prodSnap.val();
+            const prodName = prodData.nombre;
+            if (prodData.opciones) {
+              for (const optId in prodData.opciones) {
+                const opt = prodData.opciones[optId];
+                const expectedProdString = `${prodName} (${opt.titulo})`;
+                if (expectedProdString === targetKeyObj.producto) {
+                  foundRef = `productos/${prodSnap.key}/opciones/${optId}/keys`;
+                  currentKeys = opt.keys || [];
+                  if (!Array.isArray(currentKeys)) currentKeys = Object.values(currentKeys);
+                }
+              }
+            }
+          });
+        }
+
+        let restockMsg = "";
+        if (foundRef) {
+          currentKeys.push(targetKeyObj.key);
+          await set(ref(db, foundRef), currentKeys);
+          restockMsg = "📦 *La key ha sido reabastecida en la tienda automáticamente.*";
+        } else {
+          restockMsg = "⚠️ *El producto original ya no existe en la tienda, así que la key no se pudo reabastecer, pero sí se eliminó del usuario.*";
+        }
+
+        bot.editMessageText(`✅ *DEVOLUCIÓN COMPLETADA*\n\nSe revocó la key \`${targetKeyObj.key}\` del ID \`${uId}\`.\n\n${restockMsg}`, { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" });
+        
+        // Notificar al usuario discretamente
+        bot.sendMessage(uId, `⚠️ Un administrador ha revocado y devuelto tu producto:\n*${targetKeyObj.producto}*`).catch(()=>{});
+        return;
+      }
+
       if (data.startsWith('disc_rank:')) {
         const rank = data.split(':')[1];
         userStates[chatId] = { step: 'AWAITING_DISC_LABEL', rank: rank };
@@ -798,7 +912,8 @@ bot.on('callback_query', async (query) => {
               btn('Agregar Saldo', 'add_saldo'), btn('Quitar Saldo', 'remove_saldo'),
               btn('Crear Prod.', 'create_prod'), btn('Gestionar Prod.', 'manage_prod'),
               btn('Ver Stocks', 'view_stock'), btn('Editar Precios', 'edit_price'),
-              btn('Ver Historial', 'view_history'), btn('Banear Usuarios', 'ban_user'), 
+              btn('Ver Historial', 'view_history'), btn('Banear Usuarios', 'ban_user'),
+              btn('Devolver Keys', 'return_keys'), 
               [{ text: "🔙 Volver a la lista", callback_data: "admin_perms" }]
             ]
           }
