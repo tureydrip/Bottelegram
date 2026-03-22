@@ -674,22 +674,18 @@ bot.on('callback_query', async (query) => {
 
         if (!g) return bot.sendMessage(chatId, "❌ Grupo no encontrado o ya fue procesado completo.");
 
-        let botonesKeys = [];
-        g.indices.forEach(idx => {
-          let k = keysArr[idx];
-          // Recortamos la key para que el botón no quede gigante
-          let keyText = k.key.length > 25 ? k.key.substring(0, 25) + "..." : k.key;
-          botonesKeys.push([{ text: `🔑 ${keyText}`, callback_data: `sel_ret:${uId}:${idx}` }]);
-        });
-        
-        botonesKeys.push([{ text: "🔙 Volver a los grupos", callback_data: `ret_back:${uId}` }]);
+        // PREGUNTAMOS DIRECTAMENTE SIN LISTAR LAS KEYS
+        const confirmBtn = [
+          [{ text: "✅ Sí, devolver estas keys", callback_data: `conf_ret_grp:${uId}:${groupIndex}` }],
+          [{ text: "🔙 Cancelar y Volver", callback_data: `ret_back:${uId}` }]
+        ];
 
-        return bot.editMessageText(`📦 *${g.producto}*\n📅 *Fecha:* ${g.fecha}\n\n⬇️ Selecciona la Key específica que deseas devolver a la tienda:`, {
-          chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown", reply_markup: { inline_keyboard: botonesKeys }
+        return bot.editMessageText(`⚠️ *¿Seguro que deseas devolver las keys de este grupo?*\n\n🔹 *Producto:* ${g.producto}\n📅 *Fecha:* ${g.fecha}\n📦 *Cantidad a devolver:* ${g.indices.length} keys\n\n*Al confirmar, se eliminarán del usuario y se reabastecerán en la tienda.*`, {
+          chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown", reply_markup: { inline_keyboard: confirmBtn }
         });
       }
 
-      // Para volver a la vista agrupada después de ver las keys de un grupo o devolver una
+      // Para volver a la vista agrupada
       if (data.startsWith('ret_back:')) {
         const [, uId] = data.split(':');
         const uSnap = await get(ref(db, `users/${uId}`));
@@ -727,29 +723,9 @@ bot.on('callback_query', async (query) => {
         });
       }
 
-      if (data.startsWith('sel_ret:')) {
-        const [, uId, index] = data.split(':');
-        const uSnap = await get(ref(db, `users/${uId}`));
-        if (!uSnap.exists()) return;
-        const uData = uSnap.val();
-        let keysArr = uData.keys_compradas || [];
-        if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
-
-        const k = keysArr[index];
-        if (!k) return bot.sendMessage(chatId, "❌ Key no encontrada.");
-
-        const confirmBtn = [
-          [{ text: "✅ Sí, devolver a la tienda", callback_data: `conf_ret:${uId}:${index}` }],
-          [{ text: "🔙 Cancelar y Volver", callback_data: `ret_back:${uId}` }]
-        ];
-
-        return bot.editMessageText(`⚠️ *¿Seguro que deseas devolver esta compra?*\n\n🔹 *Producto:* ${k.producto}\n🔑 *Key:* \`${k.key}\`\n📅 *Fecha:* ${k.fecha}\n\n*Al confirmar, la key se eliminará del usuario y se reabastecerá en tu tienda.*`, {
-          chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown", reply_markup: { inline_keyboard: confirmBtn }
-        });
-      }
-
-      if (data.startsWith('conf_ret:')) {
-        const [, uId, index] = data.split(':');
+      // CONFIRMACIÓN DE DEVOLUCIÓN DE TODO EL GRUPO
+      if (data.startsWith('conf_ret_grp:')) {
+        const [, uId, groupIndex] = data.split(':');
         const userRef = ref(db, `users/${uId}`);
         const uSnap = await get(userRef);
         if (!uSnap.exists()) return;
@@ -758,10 +734,32 @@ bot.on('callback_query', async (query) => {
         let keysArr = uData.keys_compradas || [];
         if (!Array.isArray(keysArr)) keysArr = Object.values(keysArr);
 
-        const targetKeyObj = keysArr[index];
-        if (!targetKeyObj) return bot.sendMessage(chatId, "❌ Error: La key ya no existe en el historial.");
+        let gruposDict = {};
+        keysArr.forEach((k, index) => {
+          if (typeof k === 'object') {
+            let fechaCorta = k.fecha ? k.fecha.split(',')[0].trim() : "Desconocida";
+            let hash = `${k.producto}_${fechaCorta}`;
+            if (!gruposDict[hash]) {
+              gruposDict[hash] = { producto: k.producto, fecha: fechaCorta, indices: [] };
+            }
+            gruposDict[hash].indices.push(index);
+          }
+        });
 
-        keysArr.splice(index, 1);
+        let grupos = Object.values(gruposDict);
+        let g = grupos[parseInt(groupIndex)];
+
+        if (!g) return bot.sendMessage(chatId, "❌ Error: El grupo ya no existe en el historial.");
+
+        // Extraer las llaves a devolver
+        let keysToReturn = g.indices.map(idx => keysArr[idx].key);
+
+        // Borrar del usuario de atrás hacia adelante para no corromper los índices del array original
+        let indicesToRem = [...g.indices].sort((a,b) => b - a);
+        indicesToRem.forEach(idx => {
+          keysArr.splice(idx, 1);
+        });
+
         await set(ref(db, `users/${uId}/keys_compradas`), keysArr);
 
         const prodsSnap = await get(ref(db, 'productos'));
@@ -776,7 +774,7 @@ bot.on('callback_query', async (query) => {
               for (const optId in prodData.opciones) {
                 const opt = prodData.opciones[optId];
                 const expectedProdString = `${prodName} (${opt.titulo})`;
-                if (expectedProdString === targetKeyObj.producto) {
+                if (expectedProdString === g.producto) {
                   foundRef = `productos/${prodSnap.key}/opciones/${optId}/keys`;
                   currentKeys = opt.keys || [];
                   if (!Array.isArray(currentKeys)) currentKeys = Object.values(currentKeys);
@@ -788,21 +786,21 @@ bot.on('callback_query', async (query) => {
 
         let restockMsg = "";
         if (foundRef) {
-          currentKeys.push(targetKeyObj.key);
+          currentKeys.push(...keysToReturn); // Se agregan todas las llaves de golpe
           await set(ref(db, foundRef), currentKeys);
-          restockMsg = "📦 *La key ha sido reabastecida en la tienda automáticamente.*";
+          restockMsg = `📦 *Las ${keysToReturn.length} keys han sido reabastecidas en la tienda automáticamente.*`;
         } else {
-          restockMsg = "⚠️ *El producto original ya no existe en la tienda, así que la key no se pudo reabastecer, pero sí se eliminó del usuario.*";
+          restockMsg = "⚠️ *El producto original ya no existe en la tienda, así que las keys no se reabastecieron, pero sí se eliminaron del usuario.*";
         }
 
-        bot.editMessageText(`✅ *DEVOLUCIÓN COMPLETADA*\n\nSe revocó la key \`${targetKeyObj.key}\` del ID \`${uId}\`.\n\n${restockMsg}`, { 
+        bot.editMessageText(`✅ *DEVOLUCIÓN COMPLETADA*\n\nSe revocaron ${keysToReturn.length} keys del producto *${g.producto}* al ID \`${uId}\`.\n\n${restockMsg}`, { 
           chat_id: chatId, 
           message_id: query.message.message_id, 
           parse_mode: "Markdown",
           reply_markup: { inline_keyboard: [[{ text: "🔙 Volver a compras del usuario", callback_data: `ret_back:${uId}` }]] }
         });
         
-        bot.sendMessage(uId, `⚠️ Un administrador ha revocado y devuelto tu producto:\n*${targetKeyObj.producto}*`).catch(()=>{});
+        bot.sendMessage(uId, `⚠️ Un administrador ha revocado y devuelto tu(s) producto(s):\n*${keysToReturn.length}x ${g.producto}*`).catch(()=>{});
         return;
       }
 
