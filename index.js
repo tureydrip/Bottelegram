@@ -2,7 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, get, set, update, push, remove } from 'firebase/database';
 
-// --- 1. CONFIGURACIÓN DE FIREBASE ---
+// --- 1. CONFIGURACIÓN DE FIREBASE --
 const firebaseConfig = {
   apiKey: "AIzaSyBCk_6-UQu_8js-Rof_Vps7QWPBw6dJFcg",
   authDomain: "temo-store.firebaseapp.com",
