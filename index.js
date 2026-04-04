@@ -17,7 +17,7 @@ const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
 // --- 2. CONFIGURACIÓN DEL BOT ---
-const token = '8240591970:AAEAPtTNdanUdR0tXZDjFC9hcdxsdmQFuGI'; 
+const token = '8240591970:AAFzgSQEUCeWyb1SjbMZFpfHCwyB6fOnx08'; 
 const bot = new TelegramBot(token, { polling: true });
 
 // MANEJO DE ERRORES GLOBALES PARA EVITAR CAÍDAS
